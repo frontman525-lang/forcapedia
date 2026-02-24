@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(curl:*)",
+      "Bash(node -e:*)",
+      "Bash(node:*)",
+      "Bash(\"c:/Users/shaik/Desktop/forcapedia/scripts/find_broken2.cjs\":*)",
+      "Bash(python3:*)",
+      "Bash(\"c:/Users/shaik/Desktop/forcapedia/scripts/diag.mjs\":*)"
+    ]
+  }
+}
