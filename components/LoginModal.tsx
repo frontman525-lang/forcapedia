@@ -9,13 +9,39 @@ interface LoginModalProps {
   onClose: () => void
 }
 
+function mapAuthError(message: string, mode: 'signin' | 'signup') {
+  const m = message.toLowerCase()
+
+  if (m.includes('email rate limit exceeded') || m.includes('rate limit')) {
+    return mode === 'signup'
+      ? 'Signup email limit hit. For direct signup, disable "Confirm email" in Supabase Auth settings, then try again.'
+      : 'Too many attempts. Please wait a minute and try again.'
+  }
+
+  if (m.includes('already registered') || m.includes('user already registered')) {
+    return 'Account already exists. Switch to Sign in.'
+  }
+
+  if (m.includes('invalid login credentials')) {
+    return 'Invalid email or password.'
+  }
+
+  if (m.includes('email not confirmed')) {
+    return 'Email confirmation is required for this project. Confirm your email or disable confirmation in Supabase.'
+  }
+
+  return message
+}
+
 export default function LoginModal({ pendingQuery, onClose }: LoginModalProps) {
   const supabase = createClient()
   const [mounted, setMounted] = useState(false)
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin')
   const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [emailLoading, setEmailLoading] = useState(false)
-  const [emailStatus, setEmailStatus] = useState<string | null>(null)
   const [emailError, setEmailError] = useState<string | null>(null)
+  const [emailStatus, setEmailStatus] = useState<string | null>(null)
 
   // Portal needs client mount
   useEffect(() => { setMounted(true) }, [])
@@ -35,7 +61,7 @@ export default function LoginModal({ pendingQuery, onClose }: LoginModalProps) {
     })
   }
 
-  async function handleEmailLogin(e: React.FormEvent) {
+  async function handleEmailAuth(e: React.FormEvent) {
     e.preventDefault()
     const cleaned = email.trim().toLowerCase()
     const isEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleaned)
@@ -46,27 +72,67 @@ export default function LoginModal({ pendingQuery, onClose }: LoginModalProps) {
       return
     }
 
-    if (pendingQuery) sessionStorage.setItem('forcapedia_pending_search', pendingQuery)
+    if (!password) {
+      setEmailError('Enter your password.')
+      setEmailStatus(null)
+      return
+    }
+
+    if (authMode === 'signup' && password.length < 6) {
+      setEmailError('Password must be at least 6 characters.')
+      setEmailStatus(null)
+      return
+    }
+
+    if (pendingQuery && authMode === 'signin') {
+      sessionStorage.setItem('forcapedia_pending_search', pendingQuery)
+    }
 
     setEmailLoading(true)
     setEmailError(null)
     setEmailStatus(null)
 
-    const { error } = await supabase.auth.signInWithOtp({
+    if (authMode === 'signin') {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: cleaned,
+        password,
+      })
+
+      if (error) {
+        setEmailError(mapAuthError(error.message || 'Failed to sign in.', 'signin'))
+        setEmailLoading(false)
+        return
+      }
+
+      setEmailLoading(false)
+      onClose()
+      if (pendingQuery) window.location.reload()
+      return
+    }
+
+    const { data, error } = await supabase.auth.signUp({
       email: cleaned,
-      options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
-      },
+      password,
     })
 
     if (error) {
-      setEmailError(error.message || 'Failed to send sign-in link.')
+      const mapped = mapAuthError(error.message || 'Failed to create account.', 'signup')
+      setEmailError(mapped)
+      if (mapped.includes('Switch to Sign in')) {
+        setAuthMode('signin')
+      }
       setEmailLoading(false)
       return
     }
 
-    setEmailStatus(`Magic link sent to ${cleaned}. Check your inbox.`)
     setEmailLoading(false)
+    if (data.session) {
+      setEmailStatus('Account created. You are now signed in.')
+      onClose()
+      return
+    }
+
+    setEmailStatus('Signup created but email confirmation is enabled. Disable "Confirm email" in Supabase for direct signup.')
   }
 
   if (!mounted) return null
@@ -169,7 +235,7 @@ export default function LoginModal({ pendingQuery, onClose }: LoginModalProps) {
             marginBottom: '0.5rem',
             color: 'var(--text-primary)',
           }}>
-            One click to continue
+            {authMode === 'signin' ? 'Welcome back' : 'Create your account'}
           </h2>
 
           <p style={{
@@ -179,7 +245,9 @@ export default function LoginModal({ pendingQuery, onClose }: LoginModalProps) {
             lineHeight: 1.55,
             marginBottom: '1.5rem',
           }}>
-            Sign in with email or Google.
+            {authMode === 'signin'
+              ? 'Sign in with email + password or Google.'
+              : 'Sign up with email + password, then start searching.'}
           </p>
 
           {/* Pending query pill */}
@@ -210,7 +278,7 @@ export default function LoginModal({ pendingQuery, onClose }: LoginModalProps) {
           )}
 
           {/* Email login */}
-          <form onSubmit={handleEmailLogin} style={{ marginBottom: '0.9rem' }}>
+          <form onSubmit={handleEmailAuth} style={{ marginBottom: '0.9rem' }}>
             <input
               type="email"
               value={email}
@@ -234,24 +302,49 @@ export default function LoginModal({ pendingQuery, onClose }: LoginModalProps) {
               onFocus={e => { e.currentTarget.style.borderColor = 'var(--border-gold)' }}
               onBlur={e => { e.currentTarget.style.borderColor = 'var(--border)' }}
             />
+            <input
+              type="password"
+              value={password}
+              onChange={e => setPassword(e.currentTarget.value)}
+              placeholder={authMode === 'signin' ? 'Password' : 'Create password (min 6 chars)'}
+              autoComplete={authMode === 'signin' ? 'current-password' : 'new-password'}
+              disabled={emailLoading}
+              style={{
+                width: '100%',
+                padding: '0.72rem 0.9rem',
+                borderRadius: '10px',
+                border: '1px solid var(--border)',
+                background: 'rgba(255,255,255,0.04)',
+                color: 'var(--text-primary)',
+                fontFamily: 'var(--font-sans)',
+                fontSize: '14px',
+                fontWeight: 300,
+                marginBottom: '0.65rem',
+                outline: 'none',
+              }}
+              onFocus={e => { e.currentTarget.style.borderColor = 'var(--border-gold)' }}
+              onBlur={e => { e.currentTarget.style.borderColor = 'var(--border)' }}
+            />
             <button
               type="submit"
-              disabled={emailLoading || !email.trim()}
+              disabled={emailLoading || !email.trim() || !password}
               style={{
                 width: '100%',
                 padding: '0.74rem 1rem',
                 borderRadius: '10px',
                 border: '1px solid var(--border-gold)',
-                background: emailLoading || !email.trim() ? 'rgba(255,255,255,0.04)' : 'var(--gold-dim)',
-                color: emailLoading || !email.trim() ? 'var(--text-tertiary)' : 'var(--gold)',
+                background: emailLoading || !email.trim() || !password ? 'rgba(255,255,255,0.04)' : 'var(--gold-dim)',
+                color: emailLoading || !email.trim() || !password ? 'var(--text-tertiary)' : 'var(--gold)',
                 fontFamily: 'var(--font-sans)',
                 fontSize: '13px',
                 fontWeight: 600,
-                cursor: emailLoading || !email.trim() ? 'default' : 'pointer',
+                cursor: emailLoading || !email.trim() || !password ? 'default' : 'pointer',
                 transition: 'all 0.2s',
               }}
             >
-              {emailLoading ? 'Sending...' : 'Continue with Email'}
+              {emailLoading
+                ? (authMode === 'signin' ? 'Signing in...' : 'Creating account...')
+                : (authMode === 'signin' ? 'Sign in with Email' : 'Sign up with Email')}
             </button>
           </form>
 
@@ -276,6 +369,27 @@ export default function LoginModal({ pendingQuery, onClose }: LoginModalProps) {
               {emailStatus}
             </p>
           )}
+
+          <button
+            type="button"
+            onClick={() => {
+              setAuthMode(authMode === 'signin' ? 'signup' : 'signin')
+              setEmailError(null)
+              setEmailStatus(null)
+            }}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'var(--gold)',
+              fontFamily: 'var(--font-sans)',
+              fontSize: '12.5px',
+              cursor: 'pointer',
+              marginBottom: '1rem',
+              textDecoration: 'underline',
+            }}
+          >
+            {authMode === 'signin' ? 'New user? Create account' : 'Already have an account? Sign in'}
+          </button>
 
           <p style={{
             fontFamily: 'var(--font-mono)',
