@@ -66,7 +66,7 @@ export default function HomePage() {
       </main>
 
       <div
-        style={{
+        style={{ 
           position: 'fixed',
           right: '1.25rem',
           bottom: '1.1rem',
