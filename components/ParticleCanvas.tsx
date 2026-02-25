@@ -30,16 +30,16 @@ export default function ParticleCanvas() {
     resize()
     window.addEventListener('resize', resize, { passive: true })
 
-    const COUNT = 200
+    const COUNT = 150
     const particles: Particle[] = Array.from({ length: COUNT }, () => ({
       x: Math.random() * window.innerWidth,
       y: Math.random() * window.innerHeight,
-      vx: (Math.random() - 0.5) * 0.18,
-      vy: (Math.random() - 0.5) * 0.18,
+      vx: (Math.random() - 0.5) * 0.1,
+      vy: (Math.random() - 0.5) * 0.1,
       size: Math.random() * 1.4 + 0.2,
       opacity: Math.random() * 0.6 + 0.05,
       targetOpacity: Math.random() * 0.7 + 0.1,
-      twinkleSpeed: Math.random() * 0.008 + 0.002,
+      twinkleSpeed: Math.random() * 0.006 + 0.0015,
       gold: Math.random() > 0.88,
     }))
 

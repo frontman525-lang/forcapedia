@@ -3,7 +3,6 @@ import Nav from '@/components/Nav'
 import SearchBox from '@/components/SearchBox'
 import ParticleCanvas from '@/components/ParticleCanvas'
 import RecentVerified from '@/components/RecentVerified'
-import ArticleCount from '@/components/ArticleCount'
 
 export default function HomePage() {
   return (
@@ -65,8 +64,6 @@ export default function HomePage() {
           <RecentVerified />
         </div>
       </main>
-
-      <ArticleCount />
 
       <div
         style={{

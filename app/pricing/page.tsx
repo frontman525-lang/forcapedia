@@ -17,8 +17,6 @@ const TIERS = [
       '50,000 tokens / month',
       '1 follow-up per article',
       'Full article access',
-      'Light & dark mode',
-      'Community support',
     ],
     cta: 'Get started',
     ctaHref: '/',
