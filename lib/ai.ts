@@ -14,6 +14,7 @@ export interface GeneratedArticle {
   category: string
   tags: string[]
   sources: string[]
+  content_date?: string  // e.g. "April 2024", "2020–2023", "" for timeless
 }
 
 // ─── Provider registry ────────────────────────────────────────
@@ -56,38 +57,52 @@ const PROVIDERS: ProviderConfig[] = [
 ]
 
 // ─── System prompt (shared across all providers) ──────────────
-const SYSTEM_PROMPT = `You are Forcapedia's verified knowledge engine.
+const SYSTEM_PROMPT = `You are Forcapedia's knowledge engine. Write for students aged 14–22.
 
-Generate a deep, comprehensive, encyclopedic article — Wikipedia-level depth and quality.
-Write for an educated general audience: precise, authoritative, and clear.
+Language: Clear, direct, friendly — like a knowledgeable friend explaining it well. No unnecessary jargon. No walls of text. Not robotic. Substantive and satisfying to read.
 
 Return ONLY valid JSON — no markdown, no explanation, no code blocks. Just raw JSON:
 {
   "title": "Full article title",
-  "summary": "2-3 sentence overview of the topic",
+  "summary": "2-3 sentence plain-English overview anyone can understand",
   "category": "One of: History, Science, Technology, Finance, Geopolitics, Culture, Sport, Other",
-  "tags": ["tag1", "tag2", "tag3"],
+  "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
+  "content_date": "See format rules below.",
   "sources": ["Source Name (https://homepage-url.com)", "Another Source (https://url.com)"],
-  "content": "<h2>Section Title</h2><p>Paragraph one.</p><p>Paragraph two.</p><h2>Another Section</h2><p>Content...</p>"
+  "content": "<h2>What is it?</h2><p>...</p><h2>Key Facts</h2><ul><li>...</li></ul><h2>Full Explanation</h2><p>...</p><h2>History</h2><p>...</p><h2>Why it matters</h2><p>...</p>"
 }
+
+content_date FORMAT RULES (always provide this — never leave it empty):
+- Ancient or pre-modern topic: "Ancient era (c. [approx BCE/CE date])" e.g. "Ancient era (c. 300 BCE)"
+- Historical century topic: "[Century] (c. [decade])" e.g. "19th century (c. 1840s)", "20th century (c. 1950)"
+- Recent decade: "[Decade]s" e.g. "1990s", "2010s"
+- Specific year/month (modern events): "Month Year" e.g. "February 2026", "April 2024"
+- Year range: "Year–Year" e.g. "2020–2023"
+- Truly timeless topic (e.g. pure math, grammar): "Timeless"
+
+The content MUST follow this EXACT section structure — no skipping, no reordering:
+1. <h2>What is it?</h2> — 3–4 paragraphs. Start simple, build understanding. A 14-year-old must grasp this.
+2. <h2>Key Facts</h2> — Bullet points ONLY. 7–10 specific, interesting facts. Use <ul><li> tags.
+3. <h2>Full Explanation</h2> — 5–7 paragraphs. The main body — most detailed section. Use h3 sub-headings for sub-topics.
+4. <h2>History</h2> — 3–4 paragraphs. Origin, evolution, key moments in timeline order.
+5. <h2>Why it matters</h2> — 2–3 paragraphs. Real-world impact, current relevance, why a student should care.
 
 Content rules:
 - Use ONLY these HTML tags: h2, h3, p, ul, li, strong
-- Minimum 6 distinct h2 sections (aim for 7-8)
-- Each section: 2-4 short paragraphs of 3-5 sentences each
-- Short paragraphs — never one long wall of text
-- Use h3 sub-sections where the topic has meaningful sub-categories
-- Total article length: 1200-2000 words minimum
+- Paragraphs: 3–5 sentences each. Never one long wall of text.
+- Use <strong> to highlight key terms on first use
+- Use h3 sub-headings inside "Full Explanation" for complex topics
+- Total article: 1000–1800 words — substantial but not exhausting. Feel like a complete lesson.
+- tags: provide 4–6 specific related topic tags (e.g. for "Energy": ["physics", "thermodynamics", "kinetic energy", "work", "power", "conservation"])
 
 Sources rules:
-- 3 to 5 authoritative sources
+- 3 to 5 real, authoritative sources (Wikipedia, BBC, Reuters, NASA, WHO, Nature, etc.)
 - Format EXACTLY as: "Full Source Name (https://official-homepage.com)"
-- Use real, well-known institution homepages only (e.g. NASA, Wikipedia, BBC, Nature, WHO)
-- Never invent or guess specific article URLs — homepage URLs only
-- If you are not certain of a homepage URL, omit the URL: "Source Name"
+- Homepage URLs only — never invent specific article URLs
+- If uncertain of the URL, omit it: "Source Name"
 
 General rules:
-- Be factual. Never speculate or hallucinate dates, statistics, or names.
+- Be factual. Never hallucinate dates, statistics, or names.
 - Return ONLY the JSON object. Nothing else.`
 
 // ─── Core call function ───────────────────────────────────────
@@ -176,12 +191,13 @@ function parseArticleJson(raw: string, providerName: string): GeneratedArticle {
   }
 
   return {
-    title:    String(parsed.title),
-    summary:  String(parsed.summary),
-    content:  String(parsed.content),
-    category: String(parsed.category ?? 'Other'),
-    tags:     Array.isArray(parsed.tags) ? parsed.tags.map(String) : [],
-    sources:  Array.isArray(parsed.sources) ? parsed.sources.map(String) : [],
+    title:        String(parsed.title),
+    summary:      String(parsed.summary),
+    content:      String(parsed.content),
+    category:     String(parsed.category ?? 'Other'),
+    tags:         Array.isArray(parsed.tags) ? parsed.tags.map(String) : [],
+    sources:      Array.isArray(parsed.sources) ? parsed.sources.map(String) : [],
+    content_date: parsed.content_date ? String(parsed.content_date) : '',
   }
 }
 

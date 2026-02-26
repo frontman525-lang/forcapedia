@@ -49,10 +49,10 @@ export default function Nav() {
       alignItems: 'center',
       justifyContent: 'space-between',
       background: scrolled ? 'var(--nav-bg)' : 'transparent',
-      backdropFilter: scrolled ? 'blur(20px)' : 'none',
-      WebkitBackdropFilter: scrolled ? 'blur(20px)' : 'none',
-      borderBottom: `1px solid ${scrolled ? 'var(--border)' : 'transparent'}`,
-      transition: 'background 0.3s, border-color 0.3s',
+      backdropFilter: scrolled ? 'blur(32px) saturate(140%)' : 'none',
+      WebkitBackdropFilter: scrolled ? 'blur(32px) saturate(140%)' : 'none',
+      borderBottom: `1px solid ${scrolled ? 'rgba(255,255,255,0.04)' : 'transparent'}`,
+      transition: 'background 0.4s ease, border-color 0.4s ease, backdrop-filter 0.4s ease',
     }}>
       {/* Logo — hidden on homepage (hero text acts as logo), visible everywhere else */}
       <Link href="/" style={{

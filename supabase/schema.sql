@@ -20,6 +20,8 @@ create table if not exists public.articles (
   created_at   timestamptz not null default now(),
   created_by   uuid references auth.users(id) on delete set null,
   view_count       integer not null default 0,
+  -- Event date provided by AI (e.g. "April 2024", "2020–2023", null for timeless)
+  event_date       text,
   -- Wikipedia integration (null for pure-AI articles)
   wiki_revid       bigint,
   wiki_url         text,

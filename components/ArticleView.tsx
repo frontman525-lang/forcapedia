@@ -18,6 +18,14 @@ interface Article {
   created_at: string
   sources: string[]
   wiki_url?: string | null
+  event_date?: string | null
+}
+
+interface RelatedArticle {
+  slug: string
+  title: string
+  summary: string
+  category: string
 }
 
 interface TocItem {
@@ -78,12 +86,16 @@ function buildArticleContentWithToc(content: string): { html: string; items: Toc
   return { html, items }
 }
 
+function calcReadingTime(html: string): number {
+  const words = stripHtml(html).split(/\s+/).filter(w => w.length > 0).length
+  return Math.max(1, Math.ceil(words / 200))
+}
+
 export default function ArticleView({ article }: { article: Article }) {
   const { showAlert } = useAlert()
   const supabase = createClient()
   const articleContentRef = useRef<HTMLDivElement | null>(null)
   const tocButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({})
-  const activeSectionIdRef = useRef('')
 
   const [followUp, setFollowUp] = useState('')
   const [followUpResult, setFollowUpResult] = useState('')
@@ -93,11 +105,21 @@ export default function ArticleView({ article }: { article: Article }) {
   const [newsLoading, setNewsLoading] = useState(true)
   const [activeSectionId, setActiveSectionId] = useState('')
   const [isDesktopLayout, setIsDesktopLayout] = useState(false)
+  const [related, setRelated] = useState<RelatedArticle[]>([])
 
   const { html: contentWithAnchors, items: tocItems } = useMemo(
     () => buildArticleContentWithToc(article.content),
     [article.content],
   )
+
+  const readingTime = useMemo(() => calcReadingTime(article.content), [article.content])
+
+  // Badge date: prefer AI-provided event_date, else fall back to month+year of verified_at
+  const badgeDate = useMemo(() => {
+    if (article.event_date) return article.event_date
+    const d = new Date(article.verified_at || article.created_at)
+    return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long' })
+  }, [article.event_date, article.verified_at, article.created_at])
 
   useEffect(() => {
     fetch(`/api/news?topic=${encodeURIComponent(article.title)}`)
@@ -106,6 +128,34 @@ export default function ArticleView({ article }: { article: Article }) {
       .catch(() => setNews([]))
       .finally(() => setNewsLoading(false))
   }, [article.title])
+
+  // Fetch related articles — tag overlap first (topic-smart), category fallback
+  useEffect(() => {
+    async function fetchRelated() {
+      // Stage 1: articles that share at least one tag with this article
+      if (article.tags?.length > 0) {
+        const { data: tagMatches } = await supabase
+          .from('articles')
+          .select('slug, title, summary, category')
+          .overlaps('tags', article.tags)
+          .neq('slug', article.slug)
+          .limit(4)
+        if (tagMatches && tagMatches.length > 0) {
+          setRelated(tagMatches)
+          return
+        }
+      }
+      // Stage 2: fallback — same category
+      const { data: catMatches } = await supabase
+        .from('articles')
+        .select('slug, title, summary, category')
+        .eq('category', article.category)
+        .neq('slug', article.slug)
+        .limit(3)
+      setRelated(catMatches ?? [])
+    }
+    fetchRelated()
+  }, [article.slug, article.category, article.tags]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const mq = window.matchMedia('(min-width: 1100px)')
@@ -125,88 +175,65 @@ export default function ArticleView({ article }: { article: Article }) {
     )
   }, [tocItems])
 
+  // Scroll spy ─────────────────────────────────────────────────
+  // Two key design choices that make this reliable:
+  //
+  // 1. document.addEventListener + capture:true
+  //    Scroll events do NOT bubble. capture:true intercepts them during
+  //    the capture phase (before they reach the target), so we catch
+  //    scrolls on window, body, or any nested scrollable element.
+  //
+  // 2. document.getElementById() called fresh every frame (no cached refs).
+  //    Any state update (news load, related articles) re-renders the
+  //    component and React might move DOM nodes. Fresh ID lookups are
+  //    O(1) hash-table ops — negligible cost for 5 headings.
   useEffect(() => {
-    activeSectionIdRef.current = activeSectionId
-  }, [activeSectionId])
+    if (tocItems.length === 0) return
 
-  useEffect(() => {
-    const root = articleContentRef.current
-    if (!root || tocItems.length === 0) return
-
-    const headings = tocItems
-      .map(item => document.getElementById(item.id))
-      .filter((node): node is HTMLElement => !!node && root.contains(node))
-
-    if (headings.length === 0) return
-
-    const scrollTargets: Array<Window | HTMLElement> = [window]
-    let parent: HTMLElement | null = root.parentElement
-    while (parent) {
-      const styles = window.getComputedStyle(parent)
-      const isScrollable = /(auto|scroll)/.test(styles.overflowY)
-      if (isScrollable && parent.scrollHeight > parent.clientHeight + 1) {
-        scrollTargets.push(parent)
-      }
-      parent = parent.parentElement
-    }
+    // 120 px = nav height (64px) + breathing room so the active section
+    // switches just before the heading reaches the top of the viewport.
+    const THRESHOLD = 120
 
     let rafId = 0
     const runSpy = () => {
       rafId = 0
+      let activeId = tocItems[0]?.id ?? ''
 
-      // Keep activation near the top reading line (below fixed nav) for consistent, non-late switching.
-      const activationLine = 120
-      let nextActiveIndex = 0
-      for (let i = 0; i < headings.length; i++) {
-        if (headings[i].getBoundingClientRect().top <= activationLine) {
-          nextActiveIndex = i
-          continue
+      for (const { id } of tocItems) {
+        const el = document.getElementById(id)
+        if (!el) continue
+        if (el.getBoundingClientRect().top <= THRESHOLD) {
+          activeId = id   // last heading above the threshold = active section
+        } else {
+          break           // headings are in DOM order; none below can qualify
         }
-        break
       }
 
-      const currentIndex = headings.findIndex(h => h.id === activeSectionIdRef.current)
-      if (currentIndex !== -1 && Math.abs(nextActiveIndex - currentIndex) > 1) {
-        nextActiveIndex = currentIndex + Math.sign(nextActiveIndex - currentIndex)
-      }
-
-      const nextActive = headings[nextActiveIndex]
-      if (nextActive?.id) {
-        setActiveSectionId(prev => (prev === nextActive.id ? prev : nextActive.id))
-      }
+      setActiveSectionId(prev => (prev === activeId ? prev : activeId))
     }
 
-    const onScroll = () => {
-      if (rafId) return
-      rafId = window.requestAnimationFrame(runSpy)
-    }
+    const onScroll = () => { if (!rafId) rafId = window.requestAnimationFrame(runSpy) }
 
-    runSpy()
+    runSpy()   // set correct initial section without waiting for a scroll
+
+    // capture:true → fires for scroll events on window AND any inner container
+    document.addEventListener('scroll', onScroll, { passive: true, capture: true })
     window.addEventListener('resize', onScroll)
-    for (const target of scrollTargets) {
-      target.addEventListener('scroll', onScroll, { passive: true })
-    }
 
     return () => {
+      document.removeEventListener('scroll', onScroll, { capture: true })
       window.removeEventListener('resize', onScroll)
-      for (const target of scrollTargets) {
-        target.removeEventListener('scroll', onScroll as EventListener)
-      }
       if (rafId) window.cancelAnimationFrame(rafId)
     }
-  }, [tocItems, contentWithAnchors])
+  }, [tocItems])
 
-  const verifiedDate = new Date(article.verified_at).toLocaleDateString('en-US', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-  })
-
-  const verifiedTime = new Date(article.verified_at).toLocaleTimeString('en-US', {
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZoneName: 'short',
-  })
+  // Auto-scroll active TOC button into view inside the sidebar
+  useEffect(() => {
+    if (!activeSectionId) return
+    const target = tocButtonRefs.current[activeSectionId]
+    if (!target) return
+    target.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [activeSectionId])
 
   async function handleFollowUp(e: React.FormEvent) {
     e.preventDefault()
@@ -252,20 +279,15 @@ export default function ArticleView({ article }: { article: Article }) {
   function handleTocWheel(e: React.WheelEvent<HTMLElement>) {
     const el = e.currentTarget
     const canScrollInside = el.scrollHeight > el.clientHeight + 1
-
-    // If TOC content does not overflow, never trap wheel events.
     if (!canScrollInside) {
       window.scrollBy({ top: e.deltaY, behavior: 'auto' })
       e.preventDefault()
       return
     }
-
     const atTop = el.scrollTop <= 0
     const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1
     const scrollingUp = e.deltaY < 0
     const scrollingDown = e.deltaY > 0
-
-    // If TOC is at an edge, continue scrolling the page.
     if ((atTop && scrollingUp) || (atBottom && scrollingDown)) {
       window.scrollBy({ top: e.deltaY, behavior: 'auto' })
       e.preventDefault()
@@ -275,13 +297,6 @@ export default function ArticleView({ article }: { article: Article }) {
   const hasToc = tocItems.length > 0
   const showDesktopToc = hasToc && isDesktopLayout
   const showMobileToc = hasToc && !isDesktopLayout
-
-  useEffect(() => {
-    if (!activeSectionId) return
-    const target = tocButtonRefs.current[activeSectionId]
-    if (!target) return
-    target.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-  }, [activeSectionId])
 
   const layoutStyle = showDesktopToc
     ? {
@@ -310,6 +325,8 @@ export default function ArticleView({ article }: { article: Article }) {
       }}
     >
       <div className={`article-layout ${hasToc ? 'has-toc' : ''}`} style={layoutStyle}>
+
+        {/* ── Desktop Fixed Sidebar ─────────────────────── */}
         {showDesktopToc && (
           <aside
             className="article-toc-desktop"
@@ -323,6 +340,7 @@ export default function ArticleView({ article }: { article: Article }) {
               paddingRight: '0.25rem',
             }}
           >
+            {/* Sidebar header */}
             <p
               style={{
                 fontFamily: 'var(--font-mono)',
@@ -330,137 +348,195 @@ export default function ArticleView({ article }: { article: Article }) {
                 letterSpacing: '0.12em',
                 textTransform: 'uppercase',
                 color: 'var(--gold)',
-                marginBottom: '0.9rem',
+                marginBottom: '1rem',
+                paddingBottom: '0.6rem',
+                borderBottom: '1px solid var(--border)',
               }}
             >
               On this page
             </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+
+            {/* TOC links */}
+            <nav style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              {tocItems.map(item => {
+                const isActive = item.id === activeSectionId
+                return (
+                  <button
+                    key={item.id}
+                    ref={node => { tocButtonRefs.current[item.id] = node }}
+                    type="button"
+                    onClick={() => scrollToSection(item.id)}
+                    style={{
+                      textAlign: 'left',
+                      border: 'none',
+                      borderLeft: isActive ? '2px solid var(--gold)' : '2px solid transparent',
+                      background: isActive ? 'var(--gold-dim)' : 'transparent',
+                      color: isActive ? 'var(--gold)' : 'var(--text-tertiary)',
+                      fontFamily: 'var(--font-sans)',
+                      fontSize: item.level === 2 ? '13px' : '12px',
+                      lineHeight: 1.45,
+                      fontWeight: isActive ? 500 : 300,
+                      padding: item.level === 2
+                        ? '0.5rem 0.6rem 0.5rem 0.75rem'
+                        : '0.4rem 0.6rem 0.4rem 1.4rem',
+                      borderRadius: '0 8px 8px 0',
+                      cursor: 'pointer',
+                      transition: 'background 0.18s, color 0.18s, border-color 0.18s, font-weight 0.18s',
+                      width: '100%',
+                    }}
+                    onMouseEnter={e => {
+                      if (!isActive) {
+                        e.currentTarget.style.background = 'rgba(255,255,255,0.03)'
+                        e.currentTarget.style.color = 'var(--text-secondary)'
+                      }
+                    }}
+                    onMouseLeave={e => {
+                      if (!isActive) {
+                        e.currentTarget.style.background = 'transparent'
+                        e.currentTarget.style.color = 'var(--text-tertiary)'
+                      }
+                    }}
+                  >
+                    {item.text}
+                  </button>
+                )
+              })}
+            </nav>
+
+            {/* Reading time at bottom of sidebar */}
+            <div
+              style={{
+                marginTop: '1.5rem',
+                paddingTop: '0.75rem',
+                borderTop: '1px solid var(--border)',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '10px',
+                letterSpacing: '0.08em',
+                color: 'var(--text-tertiary)',
+              }}
+            >
+              {readingTime} min read
+            </div>
+          </aside>
+        )}
+
+        {/* ── Main Content ──────────────────────────────── */}
+        <div style={{ minWidth: 0 }}>
+
+          {/* Breadcrumb */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              marginBottom: '1.5rem',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '11px',
+              letterSpacing: '0.08em',
+              color: 'var(--text-tertiary)',
+            }}
+          >
+            <Link href="/" style={{ color: 'var(--gold)', textDecoration: 'none' }}>
+              Forcapedia
+            </Link>
+            <span>/</span>
+            <span style={{ color: 'var(--text-secondary)' }}>{article.category}</span>
+            <span>/</span>
+            <span
+              style={{
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                maxWidth: '200px',
+              }}
+            >
+              {article.title}
+            </span>
+          </div>
+
+          {/* Mobile TOC pills */}
+          {showMobileToc && (
+            <div
+              className="article-toc-mobile"
+              style={{
+                display: 'flex',
+                gap: '0.45rem',
+                overflowX: 'auto',
+                paddingBottom: '0.75rem',
+                marginBottom: '1rem',
+                scrollbarWidth: 'none',
+              }}
+            >
               {tocItems.map(item => (
                 <button
-                  key={item.id}
-                  ref={node => {
-                    tocButtonRefs.current[item.id] = node
-                  }}
+                  key={`mobile-${item.id}`}
+                  ref={node => { tocButtonRefs.current[item.id] = node }}
                   type="button"
                   onClick={() => scrollToSection(item.id)}
                   style={{
-                    textAlign: 'left',
-                    border: 'none',
-                    background: item.id === activeSectionId ? 'var(--gold-dim)' : 'transparent',
-                    color: item.id === activeSectionId ? 'var(--gold)' : 'var(--text-tertiary)',
-                    fontFamily: 'var(--font-sans)',
-                    fontSize: item.level === 2 ? '13px' : '12px',
-                    lineHeight: 1.45,
-                    fontWeight: item.level === 2 ? 400 : 300,
-                    padding: item.level === 2 ? '0.45rem 0.55rem' : '0.35rem 0.55rem 0.35rem 1rem',
-                    borderRadius: '8px',
+                    flexShrink: 0,
+                    border: '1px solid',
+                    borderColor: item.id === activeSectionId ? 'var(--border-gold)' : 'var(--border)',
+                    background: item.id === activeSectionId ? 'var(--gold-dim)' : 'rgba(255,255,255,0.02)',
+                    color: item.id === activeSectionId ? 'var(--gold)' : 'var(--text-secondary)',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '10px',
+                    letterSpacing: '0.06em',
+                    textTransform: 'uppercase',
+                    borderRadius: '999px',
+                    padding: '0.35rem 0.65rem',
                     cursor: 'pointer',
-                    transition: 'background 0.2s, color 0.2s',
-                  }}
-                  onMouseEnter={e => {
-                    if (item.id !== activeSectionId) {
-                      e.currentTarget.style.background = 'rgba(255,255,255,0.03)'
-                      e.currentTarget.style.color = 'var(--text-secondary)'
-                    }
-                  }}
-                  onMouseLeave={e => {
-                    if (item.id !== activeSectionId) {
-                      e.currentTarget.style.background = 'transparent'
-                      e.currentTarget.style.color = 'var(--text-tertiary)'
-                    }
+                    transition: 'all 0.2s',
                   }}
                 >
                   {item.text}
                 </button>
               ))}
             </div>
-          </aside>
-        )}
+          )}
 
-        <div style={{ minWidth: 0 }}>
-          <div style={{ margin: 0, padding: 0 }}>
+          {/* Badges row */}
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              gap: '0.5rem',
+              marginBottom: '1.5rem',
+            }}
+          >
+            {/* Verified badge — shows event_date or month+year of verified_at */}
             <div
               style={{
-                display: 'flex',
+                display: 'inline-flex',
                 alignItems: 'center',
-                gap: '0.5rem',
-                marginBottom: '2rem',
+                gap: '0.4rem',
                 fontFamily: 'var(--font-mono)',
-                fontSize: '11px',
-                letterSpacing: '0.08em',
-                color: 'var(--text-tertiary)',
+                fontSize: '10px',
+                letterSpacing: '0.1em',
+                textTransform: 'uppercase',
+                color: 'var(--gold)',
+                background: 'var(--gold-dim)',
+                border: '1px solid var(--border-gold)',
+                padding: '4px 12px 4px 10px',
+                borderRadius: '100px',
               }}
             >
-              <Link href="/" style={{ color: 'var(--gold)', textDecoration: 'none' }}>
-                Forcapedia
-              </Link>
-              <span>/</span>
-              <span style={{ color: 'var(--text-secondary)' }}>{article.category}</span>
-              <span>/</span>
-              <span
-                style={{
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  maxWidth: '200px',
-                }}
-              >
-                {article.title}
-              </span>
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <circle cx="6" cy="6" r="5.5" stroke="currentColor" strokeOpacity="0.4" />
+                <path
+                  d="M3.5 6l1.8 1.8L8.5 4.5"
+                  stroke="currentColor"
+                  strokeWidth="1.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              Verified {'\u00B7'} {badgeDate}
             </div>
 
-            {showMobileToc && (
-              <div
-                className="article-toc-mobile"
-                style={{
-                  display: 'flex',
-                  gap: '0.45rem',
-                  overflowX: 'auto',
-                  paddingBottom: '0.75rem',
-                  marginBottom: '1rem',
-                  scrollbarWidth: 'none',
-                }}
-              >
-                {tocItems.map(item => (
-                  <button
-                    key={`mobile-${item.id}`}
-                    ref={node => {
-                      tocButtonRefs.current[item.id] = node
-                    }}
-                    type="button"
-                    onClick={() => scrollToSection(item.id)}
-                    style={{
-                      flexShrink: 0,
-                      border: '1px solid',
-                      borderColor: item.id === activeSectionId ? 'var(--border-gold)' : 'var(--border)',
-                      background: item.id === activeSectionId ? 'var(--gold-dim)' : 'rgba(255,255,255,0.02)',
-                      color: item.id === activeSectionId ? 'var(--gold)' : 'var(--text-secondary)',
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: '10px',
-                      letterSpacing: '0.06em',
-                      textTransform: 'uppercase',
-                      borderRadius: '999px',
-                      padding: '0.35rem 0.65rem',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s',
-                    }}
-                  >
-                    {item.text}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                alignItems: 'center',
-                gap: '0.5rem',
-                marginBottom: '1.5rem',
-              }}
-            >
+            {/* Reading time badge (mobile only — desktop shows in sidebar) */}
+            {!isDesktopLayout && (
               <div
                 style={{
                   display: 'inline-flex',
@@ -469,120 +545,110 @@ export default function ArticleView({ article }: { article: Article }) {
                   fontFamily: 'var(--font-mono)',
                   fontSize: '10px',
                   letterSpacing: '0.1em',
-                  textTransform: 'uppercase',
-                  color: 'var(--gold)',
-                  background: 'var(--gold-dim)',
-                  border: '1px solid var(--border-gold)',
-                  padding: '4px 12px 4px 10px',
+                  color: 'var(--text-tertiary)',
+                  background: 'rgba(255,255,255,0.03)',
+                  border: '1px solid var(--border)',
+                  padding: '4px 12px',
                   borderRadius: '100px',
                 }}
               >
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                  <circle cx="6" cy="6" r="5.5" stroke="currentColor" strokeOpacity="0.4" />
-                  <path
-                    d="M3.5 6l1.8 1.8L8.5 4.5"
-                    stroke="currentColor"
-                    strokeWidth="1.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-                Verified {'\u00B7'} {verifiedDate} {'\u00B7'} {verifiedTime}
+                {readingTime} min read
               </div>
+            )}
 
-              {article.wiki_url && (
-                <a
-                  href={article.wiki_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '0.4rem',
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: '10px',
-                    letterSpacing: '0.1em',
-                    textTransform: 'uppercase',
-                    color: 'var(--text-secondary)',
-                    background: 'rgba(255,255,255,0.04)',
-                    border: '1px solid var(--border)',
-                    padding: '4px 12px 4px 10px',
-                    borderRadius: '100px',
-                    textDecoration: 'none',
-                    transition: 'border-color 0.2s',
-                  }}
-                  onMouseEnter={e => {
-                    e.currentTarget.style.borderColor = 'var(--border-gold)'
-                  }}
-                  onMouseLeave={e => {
-                    e.currentTarget.style.borderColor = 'var(--border)'
-                  }}
-                >
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm0 2c4.418 0 8 3.582 8 8s-3.582 8-8 8-8-3.582-8-8 3.582-8 8-8zm-1 3v2H9v2h2v6h2V9h2V7h-2V5h-2z" />
-                  </svg>
-                  Wikipedia source
-                </a>
-              )}
-            </div>
-
-            <h1
-              style={{
-                fontFamily: 'var(--font-serif)',
-                fontSize: 'clamp(2rem, 6vw, 3.5rem)',
-                fontWeight: 300,
-                lineHeight: 1.1,
-                letterSpacing: '-0.01em',
-                color: 'var(--text-primary)',
-                marginBottom: '1.25rem',
-              }}
-            >
-              {article.title}
-            </h1>
-
-            <p
-              style={{
-                fontSize: '17px',
-                color: 'var(--text-secondary)',
-                lineHeight: 1.7,
-                fontWeight: 300,
-                marginBottom: '1.5rem',
-                paddingBottom: '1.5rem',
-                borderBottom: '1px solid var(--border)',
-              }}
-            >
-              {article.summary}
-            </p>
-
-            {article.tags?.length > 0 && (
-              <div
+            {/* Wikipedia source badge */}
+            {article.wiki_url && (
+              <a
+                href={article.wiki_url}
+                target="_blank"
+                rel="noopener noreferrer"
                 style={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
+                  display: 'inline-flex',
+                  alignItems: 'center',
                   gap: '0.4rem',
-                  marginBottom: '2.5rem',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '10px',
+                  letterSpacing: '0.1em',
+                  textTransform: 'uppercase',
+                  color: 'var(--text-secondary)',
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid var(--border)',
+                  padding: '4px 12px 4px 10px',
+                  borderRadius: '100px',
+                  textDecoration: 'none',
+                  transition: 'border-color 0.2s',
                 }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--border-gold)' }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)' }}
               >
-                {article.tags.map(tag => (
-                  <span
-                    key={tag}
-                    style={{
-                      padding: '3px 10px',
-                      borderRadius: '100px',
-                      border: '1px solid var(--border)',
-                      fontFamily: 'var(--font-mono)',
-                      fontSize: '11px',
-                      color: 'var(--text-tertiary)',
-                      letterSpacing: '0.06em',
-                    }}
-                  >
-                    {tag}
-                  </span>
-                ))}
-              </div>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm0 2c4.418 0 8 3.582 8 8s-3.582 8-8 8-8-3.582-8-8 3.582-8 8-8zm-1 3v2H9v2h2v6h2V9h2V7h-2V5h-2z" />
+                </svg>
+                Wikipedia source
+              </a>
             )}
           </div>
 
+          {/* Article title */}
+          <h1
+            style={{
+              fontFamily: 'var(--font-serif)',
+              fontSize: 'clamp(2rem, 6vw, 3.5rem)',
+              fontWeight: 300,
+              lineHeight: 1.1,
+              letterSpacing: '-0.01em',
+              color: 'var(--text-primary)',
+              marginBottom: '1.25rem',
+            }}
+          >
+            {article.title}
+          </h1>
+
+          {/* Summary */}
+          <p
+            style={{
+              fontSize: '17px',
+              color: 'var(--text-secondary)',
+              lineHeight: 1.7,
+              fontWeight: 300,
+              marginBottom: '1.5rem',
+              paddingBottom: '1.5rem',
+              borderBottom: '1px solid var(--border)',
+            }}
+          >
+            {article.summary}
+          </p>
+
+          {/* Tags */}
+          {article.tags?.length > 0 && (
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '0.4rem',
+                marginBottom: '2.5rem',
+              }}
+            >
+              {article.tags.map(tag => (
+                <span
+                  key={tag}
+                  style={{
+                    padding: '3px 10px',
+                    borderRadius: '100px',
+                    border: '1px solid var(--border)',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '11px',
+                    color: 'var(--text-tertiary)',
+                    letterSpacing: '0.06em',
+                  }}
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Article body */}
           <div
             ref={articleContentRef}
             className="article-prose"
@@ -590,6 +656,7 @@ export default function ArticleView({ article }: { article: Article }) {
             dangerouslySetInnerHTML={{ __html: contentWithAnchors }}
           />
 
+          {/* Sources */}
           {article.sources?.length > 0 && (
             <div
               style={{
@@ -638,12 +705,8 @@ export default function ArticleView({ article }: { article: Article }) {
                             borderBottom: '1px solid var(--border-gold)',
                             transition: 'border-color 0.2s',
                           }}
-                          onMouseEnter={e => {
-                            e.currentTarget.style.borderBottomColor = 'var(--gold)'
-                          }}
-                          onMouseLeave={e => {
-                            e.currentTarget.style.borderBottomColor = 'var(--border-gold)'
-                          }}
+                          onMouseEnter={e => { e.currentTarget.style.borderBottomColor = 'var(--gold)' }}
+                          onMouseLeave={e => { e.currentTarget.style.borderBottomColor = 'var(--border-gold)' }}
                         >
                           {name}
                         </a>
@@ -657,6 +720,7 @@ export default function ArticleView({ article }: { article: Article }) {
             </div>
           )}
 
+          {/* Latest News */}
           {(newsLoading || news.length > 0) && (
             <div
               style={{
@@ -699,7 +763,8 @@ export default function ArticleView({ article }: { article: Article }) {
                 <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '0' }}>
                   {news.map((item, i) => {
                     const age = Math.round((Date.now() - new Date(item.publishedAt).getTime()) / 3_600_000)
-                    const ageLabel = age < 1 ? 'just now' : age < 24 ? `${age}h ago` : `${Math.round(age / 24)}d ago`
+                    const ageLabel =
+                      age < 1 ? 'just now' : age < 24 ? `${age}h ago` : `${Math.round(age / 24)}d ago`
                     return (
                       <li
                         key={i}
@@ -712,39 +777,16 @@ export default function ArticleView({ article }: { article: Article }) {
                           href={item.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          style={{
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: '0.2rem',
-                            textDecoration: 'none',
-                            color: 'inherit',
-                          }}
+                          style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', textDecoration: 'none', color: 'inherit' }}
                         >
                           <span
-                            style={{
-                              fontSize: '14px',
-                              color: 'var(--text-primary)',
-                              fontWeight: 300,
-                              lineHeight: 1.4,
-                              transition: 'color 0.2s',
-                            }}
-                            onMouseEnter={e => {
-                              e.currentTarget.style.color = 'var(--gold)'
-                            }}
-                            onMouseLeave={e => {
-                              e.currentTarget.style.color = 'var(--text-primary)'
-                            }}
+                            style={{ fontSize: '14px', color: 'var(--text-primary)', fontWeight: 300, lineHeight: 1.4, transition: 'color 0.2s' }}
+                            onMouseEnter={e => { e.currentTarget.style.color = 'var(--gold)' }}
+                            onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-primary)' }}
                           >
                             {item.title}
                           </span>
-                          <span
-                            style={{
-                              fontFamily: 'var(--font-mono)',
-                              fontSize: '11px',
-                              color: 'var(--text-tertiary)',
-                              letterSpacing: '0.04em',
-                            }}
-                          >
+                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-tertiary)', letterSpacing: '0.04em' }}>
                             {item.source} {'\u00B7'} {ageLabel}
                           </span>
                         </a>
@@ -756,6 +798,93 @@ export default function ArticleView({ article }: { article: Article }) {
             </div>
           )}
 
+          {/* Related Articles */}
+          {related.length > 0 && (
+            <div style={{ margin: '2rem 0 0' }}>
+              <p
+                style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '10px',
+                  letterSpacing: '0.12em',
+                  textTransform: 'uppercase',
+                  color: 'var(--gold)',
+                  marginBottom: '1rem',
+                }}
+              >
+                Related Articles
+              </p>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                  gap: '0.75rem',
+                }}
+              >
+                {related.map(rel => (
+                  <Link
+                    key={rel.slug}
+                    href={`/article/${rel.slug}`}
+                    style={{
+                      display: 'block',
+                      padding: '1rem',
+                      background: 'var(--surface)',
+                      border: '1px solid var(--border)',
+                      borderRadius: '12px',
+                      textDecoration: 'none',
+                      transition: 'border-color 0.2s, background 0.2s',
+                    }}
+                    onMouseEnter={e => {
+                      e.currentTarget.style.borderColor = 'var(--border-gold)'
+                      e.currentTarget.style.background = 'var(--gold-glow)'
+                    }}
+                    onMouseLeave={e => {
+                      e.currentTarget.style.borderColor = 'var(--border)'
+                      e.currentTarget.style.background = 'var(--surface)'
+                    }}
+                  >
+                    <p
+                      style={{
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: '9px',
+                        letterSpacing: '0.1em',
+                        textTransform: 'uppercase',
+                        color: 'var(--gold)',
+                        marginBottom: '0.4rem',
+                      }}
+                    >
+                      {rel.category}
+                    </p>
+                    <p
+                      style={{
+                        fontSize: '14px',
+                        fontWeight: 400,
+                        color: 'var(--text-primary)',
+                        lineHeight: 1.3,
+                        marginBottom: '0.4rem',
+                      }}
+                    >
+                      {rel.title}
+                    </p>
+                    <p
+                      style={{
+                        fontSize: '12px',
+                        color: 'var(--text-tertiary)',
+                        lineHeight: 1.5,
+                        display: '-webkit-box',
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: 'vertical',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      {rel.summary}
+                    </p>
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Follow-up question */}
           <div style={{ margin: '2rem 0 0', padding: 0 }}>
             <div
               style={{
@@ -777,7 +906,9 @@ export default function ArticleView({ article }: { article: Article }) {
               >
                 Ask a follow-up{' '}
                 {usedFollowUp && (
-                  <span style={{ color: 'var(--text-tertiary)', marginLeft: '0.5rem' }}>{'\u00B7'} 1/1 used (free plan)</span>
+                  <span style={{ color: 'var(--text-tertiary)', marginLeft: '0.5rem' }}>
+                    {'\u00B7'} 1/1 used (free plan)
+                  </span>
                 )}
               </p>
 
@@ -819,12 +950,8 @@ export default function ArticleView({ article }: { article: Article }) {
                     outline: 'none',
                     transition: 'border-color 0.2s',
                   }}
-                  onFocus={e => {
-                    e.currentTarget.style.borderColor = 'var(--border-gold)'
-                  }}
-                  onBlur={e => {
-                    e.currentTarget.style.borderColor = 'var(--border)'
-                  }}
+                  onFocus={e => { e.currentTarget.style.borderColor = 'var(--border-gold)' }}
+                  onBlur={e => { e.currentTarget.style.borderColor = 'var(--border)' }}
                 />
                 <button
                   type="submit"
@@ -834,13 +961,18 @@ export default function ArticleView({ article }: { article: Article }) {
                     borderRadius: '10px',
                     border: 'none',
                     background:
-                      !followUp.trim() || loadingFollowUp || usedFollowUp ? 'rgba(255,255,255,0.04)' : 'var(--gold)',
+                      !followUp.trim() || loadingFollowUp || usedFollowUp
+                        ? 'rgba(255,255,255,0.04)'
+                        : 'var(--gold)',
                     color:
-                      !followUp.trim() || loadingFollowUp || usedFollowUp ? 'var(--text-tertiary)' : 'var(--ink)',
+                      !followUp.trim() || loadingFollowUp || usedFollowUp
+                        ? 'var(--text-tertiary)'
+                        : 'var(--ink)',
                     fontFamily: 'var(--font-sans)',
                     fontSize: '13px',
                     fontWeight: 600,
-                    cursor: !followUp.trim() || loadingFollowUp || usedFollowUp ? 'default' : 'pointer',
+                    cursor:
+                      !followUp.trim() || loadingFollowUp || usedFollowUp ? 'default' : 'pointer',
                     transition: 'all 0.2s',
                     flexShrink: 0,
                   }}
@@ -878,12 +1010,8 @@ export default function ArticleView({ article }: { article: Article }) {
                   textDecoration: 'none',
                   transition: 'color 0.2s',
                 }}
-                onMouseEnter={e => {
-                  e.currentTarget.style.color = 'var(--gold)'
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.color = 'var(--text-tertiary)'
-                }}
+                onMouseEnter={e => { e.currentTarget.style.color = 'var(--gold)' }}
+                onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-tertiary)' }}
               >
                 &larr; Back to search
               </Link>

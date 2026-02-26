@@ -144,6 +144,7 @@ export async function POST(request: Request) {
     category:         article.category,
     tags:             article.tags,
     sources:          article.sources,
+    event_date:       article.content_date || null,
     verified_at:      new Date().toISOString(),
     created_by:       user.id,
     wiki_revid:       wiki?.revid ?? null,

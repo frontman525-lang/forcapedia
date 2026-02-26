@@ -27,12 +27,12 @@ const dmMono = DM_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'Forcapedia — Verified Knowledge',
+  title: 'Forcapedia — The Modern pedia',
   description:
     'A living, verified knowledge platform. Historical depth meets live intelligence. Every article carries a verified date stamp.',
-  keywords: ['encyclopedia', 'verified knowledge', 'AI research', 'live news', 'fact-checked'],
+  keywords: ['encyclopedia', 'History', 'AI research', 'live news', 'fact-checked'],
   openGraph: {
-    title: 'Forcapedia — Verified Knowledge',
+    title: 'Forcapedia',
     description: 'A living, verified knowledge platform. Historical depth meets live intelligence.',
     type: 'website',
   },
@@ -46,10 +46,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html
       lang="en"
       className={`${cormorant.variable} ${dmSans.variable} ${dmMono.variable}`}
-      style={{ background: '#0A0B0E' }}
+      style={{ background: '#121417' }}
       suppressHydrationWarning
     >
-      <body style={{ background: '#0A0B0E', color: '#F0EDE8' }} suppressHydrationWarning>
+      <body style={{ background: '#121417', color: '#F0EDE8' }} suppressHydrationWarning>
         {/* Must be first child — sets bg before React hydrates */}
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         <ThemeProvider>

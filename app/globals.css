@@ -6,10 +6,10 @@
   --gold-light: #E8D5B0;
   --gold-dim: rgba(201, 169, 110, 0.15);
   --gold-glow: rgba(201, 169, 110, 0.08);
-  --ink: #0A0B0E;
-  --ink-2: #111318;
-  --ink-3: #1A1D26;
-  --surface: #14161E;
+  --ink: #121417;
+  --ink-2: #171A1F;
+  --ink-3: #1E2229;
+  --surface: #1A1E25;
   --border: rgba(255, 255, 255, 0.06);
   --border-gold: rgba(201, 169, 110, 0.2);
   --text-primary: #F0EDE8;
@@ -20,10 +20,10 @@
   --amber: #F7C97E;
   --blue: #7EB8F7;
   /* Avatar tokens — neutral, theme-aware */
-  --avatar-bg: #242630;
+  --avatar-bg: #242932;
   --avatar-text: #E8E5DF;
   /* Glassmorphism card background */
-  --glass-bg: rgba(20, 22, 30, 0.82);
+  --glass-bg: rgba(26, 30, 37, 0.88);
   /* Carousel dot inactive */
   --dot-inactive: rgba(255, 255, 255, 0.2);
 }
@@ -36,10 +36,10 @@
 
   --color-gold: #C9A96E;
   --color-gold-light: #E8D5B0;
-  --color-ink: #0A0B0E;
-  --color-ink-2: #111318;
-  --color-ink-3: #1A1D26;
-  --color-surface: #14161E;
+  --color-ink: #121417;
+  --color-ink-2: #171A1F;
+  --color-ink-3: #1E2229;
+  --color-surface: #1A1E25;
   --color-text-primary: #F0EDE8;
   --color-text-secondary: rgba(240, 237, 232, 0.55);
   --color-text-tertiary: rgba(240, 237, 232, 0.3);
@@ -117,7 +117,7 @@
   --shadow-sm:    0 8px 32px rgba(0,0,0,0.4);
   --shadow-md:    0 16px 48px rgba(0,0,0,0.5);
   --shadow-focus: 0 0 0 4px rgba(201,169,110,0.07), 0 16px 48px rgba(0,0,0,0.5);
-  --nav-bg:       rgba(10,11,14,0.92);
+  --nav-bg:       rgba(18,20,23,0.72);
   --btn-bg:       rgba(255,255,255,0.04);
   --search-border: rgba(255,255,255,0.07);
 }
