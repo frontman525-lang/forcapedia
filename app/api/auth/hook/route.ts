@@ -75,7 +75,13 @@ async function verifyToken(req: Request, rawBody: string): Promise<boolean> {
 export async function POST(req: Request) {
   const rawBody = await req.text()
 
+  // DEBUG — remove after confirming auth works
+  const authHeader = req.headers.get('authorization') ?? '(none)'
+  console.log('[hook] authorization header:', authHeader.substring(0, 40))
+  console.log('[hook] SECRET set:', !!SECRET, '| body length:', rawBody.length)
+
   if (!(await verifyToken(req, rawBody))) {
+    console.log('[hook] signature mismatch — returning 401')
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
