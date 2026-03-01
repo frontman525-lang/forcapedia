@@ -8,7 +8,7 @@ export default function PricingLoading() {
       background: 'var(--ink)',
     }}>
       <span style={{
-        color: 'rgba(240,237,232,0.25)',
+        color: 'var(--text-tertiary)',
         fontFamily: 'var(--font-mono)',
         fontSize: '13px',
         letterSpacing: '0.06em',

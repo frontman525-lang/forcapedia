@@ -38,6 +38,14 @@ const CSS = `
     radial-gradient(1.5px 1.5px at 35% 60%,  rgba(255,255,255,0.60) 0%, transparent 100%);
 }
 
+/* Light mode: keep this layer neutral and clean. */
+html.light .hb-bg {
+  background: #F7F5F0;
+}
+html.light .hb-bg::before {
+  display: none;
+}
+
 /* ── Mars planet ── */
 .hb-mars-container {
   position: fixed;

@@ -4,7 +4,6 @@ import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Nav from '@/components/Nav'
 import { useAlert } from '@/components/Alert'
-import LoginModal from '@/components/LoginModal'
 import { createClient } from '@/lib/supabase/client'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -30,27 +29,27 @@ function SectionLabel({ icon, label }: { icon: string; label: string }) {
 function Pill({ label, href, onClick }: { label: string; href?: string; onClick?: () => void }) {
   const base: React.CSSProperties = {
     flexShrink: 0, display: 'inline-flex', alignItems: 'center',
-    padding: '5px 14px', background: 'rgba(255,255,255,0.05)',
-    border: '1px solid rgba(255,255,255,0.10)', borderRadius: '100px',
-    textDecoration: 'none', color: 'rgba(240,237,232,0.55)',
+    padding: '5px 14px', background: 'var(--btn-bg)',
+    border: '1px solid var(--border)', borderRadius: '100px',
+    textDecoration: 'none', color: 'var(--text-secondary)',
     fontFamily: 'var(--font-mono)', fontSize: '11px', letterSpacing: '0.04em',
     whiteSpace: 'nowrap', maxWidth: '220px',
     overflow: 'hidden', textOverflow: 'ellipsis',
     cursor: 'pointer', transition: 'border-color 0.18s, color 0.18s, background 0.18s',
   }
   const onE = (e: React.MouseEvent<HTMLElement>) => {
-    e.currentTarget.style.borderColor = 'rgba(201,169,110,0.45)'
-    e.currentTarget.style.color       = '#C9A96E'
-    e.currentTarget.style.background  = 'rgba(201,169,110,0.08)'
+    e.currentTarget.style.borderColor = 'var(--border-gold)'
+    e.currentTarget.style.color       = 'var(--gold)'
+    e.currentTarget.style.background  = 'var(--gold-dim)'
   }
   const onL = (e: React.MouseEvent<HTMLElement>) => {
-    e.currentTarget.style.borderColor = 'rgba(255,255,255,0.10)'
-    e.currentTarget.style.color       = 'rgba(240,237,232,0.55)'
-    e.currentTarget.style.background  = 'rgba(255,255,255,0.05)'
+    e.currentTarget.style.borderColor = 'var(--border)'
+    e.currentTarget.style.color       = 'var(--text-secondary)'
+    e.currentTarget.style.background  = 'var(--btn-bg)'
   }
   if (href) return <a href={href} style={base} onMouseEnter={onE} onMouseLeave={onL}>{label}</a>
   return (
-    <button style={{ ...base, border: '1px solid rgba(255,255,255,0.10)' }} onClick={onClick} onMouseEnter={onE} onMouseLeave={onL}>
+    <button style={{ ...base, border: '1px solid var(--border)' }} onClick={onClick} onMouseEnter={onE} onMouseLeave={onL}>
       {label}
     </button>
   )
@@ -73,9 +72,9 @@ function ResultCard({
         disabled={navigating !== null}
         style={{
           width: '100%', textAlign: 'left', borderRadius: '14px',
-          background: 'rgba(255,255,255,0.05)',
-          border: '1px solid rgba(255,255,255,0.09)',
-          boxShadow: '0 4px 20px rgba(0,0,0,0.30)',
+          background: 'var(--surface)',
+          border: '1px solid var(--border)',
+          boxShadow: 'var(--shadow-sm)',
           padding: 'clamp(0.8rem, 2vw, 1rem) clamp(1rem, 2.5vw, 1.25rem)',
           cursor: navigating !== null ? 'default' : 'pointer',
           transition: 'transform 0.18s ease, border-color 0.18s, background 0.18s, box-shadow 0.18s',
@@ -86,29 +85,29 @@ function ResultCard({
           if (navigating !== null) return
           const el = e.currentTarget
           el.style.transform   = 'translateX(3px)'
-          el.style.borderColor = 'rgba(201,169,110,0.28)'
-          el.style.background  = 'linear-gradient(135deg, rgba(201,169,110,0.10) 0%, rgba(201,169,110,0.04) 60%, rgba(255,255,255,0.02) 100%)'
-          el.style.boxShadow   = '0 8px 32px rgba(0,0,0,0.40), 0 0 18px rgba(201,169,110,0.06)'
+          el.style.borderColor = 'var(--border-gold)'
+          el.style.background  = 'var(--gold-dim)'
+          el.style.boxShadow   = 'var(--shadow-md)'
         }}
         onMouseLeave={e => {
           const el = e.currentTarget
           el.style.transform   = 'translateX(0)'
-          el.style.borderColor = 'rgba(255,255,255,0.09)'
-          el.style.background  = 'rgba(255,255,255,0.05)'
-          el.style.boxShadow   = '0 4px 20px rgba(0,0,0,0.30)'
+          el.style.borderColor = 'var(--border)'
+          el.style.background  = 'var(--surface)'
+          el.style.boxShadow   = 'var(--shadow-sm)'
         }}
       >
         <div style={{ minWidth: 0, flex: 1 }}>
           <p style={{
             fontSize: 'clamp(13px, 2vw, 14px)', fontWeight: 400,
-            color: isNav ? '#C9A96E' : '#F0EDE8',
+            color: isNav ? 'var(--gold)' : 'var(--text-primary)',
             marginBottom: '0.25rem',
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             transition: 'color 0.15s', letterSpacing: '0.01em',
           }}>{r.title}</p>
           <p style={{
             fontSize: 'clamp(11px, 1.8vw, 12px)', fontWeight: 300,
-            color: 'rgba(240,237,232,0.38)', lineHeight: 1.55,
+            color: 'var(--text-tertiary)', lineHeight: 1.55,
             overflow: 'hidden', textOverflow: 'ellipsis',
             display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
           }}>{stripHtml(r.snippet)}</p>
@@ -116,13 +115,13 @@ function ResultCard({
         {isNav ? (
           <span style={{
             width: '16px', height: '16px', flexShrink: 0, display: 'block',
-            border: '2px solid rgba(255,255,255,0.12)', borderTopColor: '#C9A96E',
+            border: '2px solid var(--border)', borderTopColor: 'var(--gold)',
             borderRadius: '50%', animation: 'searchSpin 0.7s linear infinite',
           }} />
         ) : (
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
             strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-            style={{ color: 'rgba(240,237,232,0.22)', flexShrink: 0 }}>
+            style={{ color: 'var(--text-tertiary)', flexShrink: 0 }}>
             <line x1="7" y1="17" x2="17" y2="7"/>
             <polyline points="7 7 17 7 17 17"/>
           </svg>
@@ -137,9 +136,10 @@ function SearchContent() {
   const searchParams = useSearchParams()
   const router       = useRouter()
   const { showAlert } = useAlert()
-  const supabase     = createClient()
+  const supabase = useRef(createClient()).current
 
   const q = searchParams.get('q') ?? ''
+  const open = searchParams.get('open') ?? ''
 
   const [inputValue, setInputValue] = useState(q)
   const [results, setResults]       = useState<WikiResult[]>([])
@@ -152,13 +152,13 @@ function SearchContent() {
   const [resultsReady, setReady]       = useState(false)
   const [loadingMore, setLoadingMore]  = useState(false)
   const [navigating, setNavigating]    = useState<number | null>(null)
-  const [showLogin, setShowLogin]      = useState(false)
   const [historyPills, setHistory]     = useState<HistoryItem[]>([])
   const [trending, setTrending]        = useState<string[]>([])
 
   const fetchStartRef = useRef<number>(0)
   const debounceRef   = useRef<ReturnType<typeof setTimeout> | null>(null)
   const inputRef      = useRef<HTMLInputElement>(null)
+  const resumeAttemptedRef = useRef(false)
 
   // Reading history
   useEffect(() => {
@@ -229,6 +229,7 @@ function SearchContent() {
 
   // Sync URL param → input + fetch
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setInputValue(q)
     if (q) fetchWiki(q)
     else   { setResults([]); setReady(false) }
@@ -253,18 +254,34 @@ function SearchContent() {
     }, 300)
   }
 
-  async function handleResultClick(title: string, idx: number) {
+  const loginRedirectUrlForTitle = useCallback((title: string) => {
+    const searchValue = (inputValue.trim() || q).trim()
+    const nextPath = searchValue
+      ? `/search?q=${encodeURIComponent(searchValue)}&open=${encodeURIComponent(title)}`
+      : `/search?open=${encodeURIComponent(title)}`
+    return `/login?next=${encodeURIComponent(nextPath)}`
+  }, [inputValue, q])
+
+  const openResult = useCallback(async (title: string, idx: number) => {
     setNavigating(idx)
     try {
       const { data } = await supabase.auth.getUser()
-      if (!data.user) { setShowLogin(true); setNavigating(null); return }
+      if (!data.user) {
+        setNavigating(null)
+        router.push(loginRedirectUrlForTitle(title))
+        return
+      }
       const res = await fetch('/api/search', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: title }),
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({}))
-        if (res.status === 401) { setShowLogin(true); setNavigating(null); return }
+        if (res.status === 401) {
+          setNavigating(null)
+          router.push(loginRedirectUrlForTitle(title))
+          return
+        }
         showAlert(err.error ?? 'Failed to load article.', 'error')
         setNavigating(null); return
       }
@@ -274,7 +291,28 @@ function SearchContent() {
       showAlert('Failed to load article. Check your connection.', 'error')
       setNavigating(null)
     }
+  }, [loginRedirectUrlForTitle, router, showAlert, supabase.auth])
+
+  function handleResultClick(title: string, idx: number) {
+    void openResult(title, idx)
   }
+
+  // After login, resume the exact result click user attempted via ?open=
+  useEffect(() => {
+    if (!open || resumeAttemptedRef.current) return
+    resumeAttemptedRef.current = true
+
+    const currentSearch = (q || inputValue).trim()
+    const cleanUrl = currentSearch
+      ? `/search?q=${encodeURIComponent(currentSearch)}`
+      : '/search'
+    window.history.replaceState(null, '', cleanUrl)
+
+    const timer = setTimeout(() => {
+      void openResult(open, -1)
+    }, 0)
+    return () => clearTimeout(timer)
+  }, [open, q, inputValue, openResult])
 
   function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -297,10 +335,10 @@ function SearchContent() {
             fontFamily: 'var(--font-serif)',
             fontSize: 'clamp(2.2rem, 7vw, 4rem)',
             fontWeight: 300, lineHeight: 1.05, letterSpacing: '-0.02em',
-            color: '#F0EDE8', marginBottom: 'clamp(1.25rem, 3vw, 2rem)',
+            color: 'var(--text-primary)', marginBottom: 'clamp(1.25rem, 3vw, 2rem)',
             opacity: 0, animation: 'fadeIn 0.35s ease forwards',
           }}>
-            Search <em style={{ fontStyle: 'italic', color: '#C9A96E' }}>anything.</em>
+            Search <em style={{ fontStyle: 'italic', color: 'var(--gold)' }}>anything.</em>
           </h1>
         )}
 
@@ -308,12 +346,12 @@ function SearchContent() {
         <form onSubmit={handleSubmit} style={{ opacity: 0, animation: 'fadeIn 0.35s 0.04s ease forwards' }}>
           <div style={{
             display: 'flex', alignItems: 'center', borderRadius: '14px',
-            border: '1px solid rgba(255,255,255,0.10)',
-            background: 'rgba(255,255,255,0.06)',
-            boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.07), 0 4px 32px rgba(0,0,0,0.50)',
+            border: '1px solid var(--border)',
+            background: 'var(--surface)',
+            boxShadow: 'var(--shadow-sm)',
             backdropFilter: 'blur(28px)', WebkitBackdropFilter: 'blur(28px)',
           }}>
-            <div style={{ padding: '0 0.9rem 0 1.25rem', color: 'rgba(240,237,232,0.35)', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
+            <div style={{ padding: '0 0.9rem 0 1.25rem', color: 'var(--text-tertiary)', flexShrink: 0, display: 'flex', alignItems: 'center' }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
               </svg>
@@ -326,9 +364,9 @@ function SearchContent() {
               style={{
                 flex: 1, background: 'none', border: 'none', outline: 'none',
                 padding: 'clamp(0.85rem, 2vw, 1rem) 0',
-                fontSize: 'clamp(14px, 2vw, 15px)', color: '#F0EDE8',
+                fontSize: 'clamp(14px, 2vw, 15px)', color: 'var(--text-primary)',
                 fontFamily: 'var(--font-sans)', fontWeight: 300,
-                caretColor: '#C9A96E', minWidth: 0,
+                caretColor: 'var(--gold)', minWidth: 0,
               }}
             />
             <button
@@ -336,8 +374,8 @@ function SearchContent() {
               style={{
                 margin: '0.375rem', width: '36px', height: '36px', borderRadius: '10px',
                 border: 'none', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: inputValue.trim() ? '#C9A96E' : 'rgba(255,255,255,0.06)',
-                color:      inputValue.trim() ? '#0D0B08'  : 'rgba(240,237,232,0.30)',
+                background: inputValue.trim() ? 'var(--gold)' : 'var(--ink-3)',
+                color:      inputValue.trim() ? 'var(--ink)'  : 'var(--text-tertiary)',
                 cursor:     inputValue.trim() ? 'pointer'  : 'default',
                 transition: 'all 0.2s',
               }}
@@ -375,7 +413,7 @@ function SearchContent() {
 
         {/* ── Thin divider when search is active ──────────────────────────── */}
         {(loadingResults || hasResults || (!loadingResults && !!inputValue.trim() && results.length === 0 && resultsReady)) && (
-          <div style={{ marginTop: 'clamp(1.25rem, 4vw, 2rem)', borderTop: '1px solid rgba(255,255,255,0.06)', marginBottom: '3px' }} />
+          <div style={{ marginTop: 'clamp(1.25rem, 4vw, 2rem)', borderTop: '1px solid var(--border)', marginBottom: '3px' }} />
         )}
 
         {/* ── Skeleton — guaranteed ≥ 500ms visibility ────────────────────── */}
@@ -384,9 +422,9 @@ function SearchContent() {
             {Array.from({ length: 7 }).map((_, i) => (
               <div key={i} style={{
                 height: '76px', borderRadius: '14px',
-                background: 'linear-gradient(90deg, rgba(255,255,255,0.07) 0%, rgba(255,255,255,0.18) 50%, rgba(255,255,255,0.07) 100%)',
+                background: 'linear-gradient(90deg, var(--surface) 0%, var(--ink-3) 50%, var(--surface) 100%)',
                 backgroundSize: '200% 100%',
-                border: '1px solid rgba(255,255,255,0.10)',
+                border: '1px solid var(--border)',
                 opacity: 1 - i * 0.08,
                 animation: 'shimmer 1.8s linear infinite',
                 animationDelay: `${i * 100}ms`,
@@ -415,15 +453,15 @@ function SearchContent() {
                   disabled={loadingMore}
                   style={{
                     padding: '0.6rem 2rem',
-                    background: 'rgba(255,255,255,0.05)',
-                    border: '1px solid rgba(255,255,255,0.10)', borderRadius: '100px',
-                    color: 'rgba(240,237,232,0.50)',
+                    background: 'var(--btn-bg)',
+                    border: '1px solid var(--border)', borderRadius: '100px',
+                    color: 'var(--text-secondary)',
                     fontFamily: 'var(--font-mono)', fontSize: '11px',
                     letterSpacing: '0.08em', textTransform: 'uppercase',
                     cursor: loadingMore ? 'default' : 'pointer', transition: 'all 0.18s',
                   }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(201,169,110,0.45)'; e.currentTarget.style.color = '#C9A96E' }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.10)'; e.currentTarget.style.color = 'rgba(240,237,232,0.50)' }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--border-gold)'; e.currentTarget.style.color = 'var(--gold)' }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-secondary)' }}
                 >
                   {loadingMore ? 'Loading…' : 'Load more'}
                 </button>
@@ -437,17 +475,17 @@ function SearchContent() {
           <div style={{
             textAlign: 'center', padding: '3.5rem 1rem',
             borderRadius: '16px',
-            border: '1px solid rgba(255,255,255,0.07)',
-            background: 'linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%)',
+            border: '1px solid var(--border)',
+            background: 'var(--surface)',
             opacity: 0, animation: 'fadeIn 0.35s ease forwards',
           }}>
             <p style={{
               fontFamily: 'var(--font-serif)', fontSize: 'clamp(1rem, 3vw, 1.25rem)',
-              fontWeight: 300, color: '#F0EDE8', marginBottom: '0.5rem',
+              fontWeight: 300, color: 'var(--text-primary)', marginBottom: '0.5rem',
             }}>
               No topics found for &ldquo;{inputValue.trim()}&rdquo;
             </p>
-            <p style={{ fontSize: '12px', color: 'rgba(240,237,232,0.35)', fontWeight: 300 }}>
+            <p style={{ fontSize: '12px', color: 'var(--text-tertiary)', fontWeight: 300 }}>
               Try different keywords or a broader term.
             </p>
           </div>
@@ -460,7 +498,7 @@ function SearchContent() {
           0%   { background-position: 200% 0; }
           100% { background-position: -200% 0; }
         }
-        input::placeholder { color: rgba(240,237,232,0.28); }
+        input::placeholder { color: var(--text-tertiary); }
 
         /* ── Static starfield background (no animated canvas) ─── */
         .sp-bg {
@@ -494,9 +532,13 @@ function SearchContent() {
             radial-gradient(1px   1px   at 15% 65%,  rgba(255,255,255,0.20) 0%, transparent 100%),
             radial-gradient(1px   1px   at 58% 88%,  rgba(255,255,255,0.18) 0%, transparent 100%);
         }
+        html.light .sp-bg {
+          background: #F7F5F0;
+        }
+        html.light .sp-bg::before {
+          display: none;
+        }
       `}</style>
-
-      {showLogin && <LoginModal pendingQuery="" onClose={() => setShowLogin(false)} />}
     </>
   )
 }
@@ -521,7 +563,7 @@ export default function SearchPage() {
             padding: 'clamp(1.5rem, 5vw, 2.5rem) clamp(1rem, 4vw, 1.75rem)',
             textAlign: 'center', fontFamily: 'var(--font-mono)',
             fontSize: '11px', letterSpacing: '0.1em', textTransform: 'uppercase',
-            color: 'rgba(240,237,232,0.30)',
+            color: 'var(--text-tertiary)',
           }}>
             Loading…
           </div>

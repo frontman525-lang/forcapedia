@@ -45,7 +45,6 @@ export default function SearchBox() {
 
   useEffect(() => {
     const pool = displayName ? getPersonalisedPlaceholders(displayName) : GUEST_PLACEHOLDERS
-    setPlaceholderIdx(Math.floor(Math.random() * pool.length))
     const interval = setInterval(() => {
       setPlaceholderIdx(i => (i + 1) % pool.length)
     }, 3500)
@@ -59,13 +58,17 @@ export default function SearchBox() {
   function navigateWithFade(url: string) {
     if (navigating.current) return
     navigating.current = true
+    const isLight = document.documentElement.classList.contains('light')
+    const rootStyles = getComputedStyle(document.documentElement)
+    const overlayBg = rootStyles.getPropertyValue('--ink').trim() || (isLight ? '#F7F5F0' : '#000')
+    const overlayOpacity = isLight ? '0.62' : '0.85'
 
     const overlay = document.createElement('div')
     Object.assign(overlay.style, {
       position:        'fixed',
       inset:           '0',
       zIndex:          '99999',
-      background:      '#000',
+      background:      overlayBg,
       opacity:         '0',
       transition:      'opacity 0.22s ease',
       pointerEvents:   'none',
@@ -74,7 +77,7 @@ export default function SearchBox() {
 
     // Force reflow so transition fires
     overlay.getBoundingClientRect()
-    overlay.style.opacity = '0.85'
+    overlay.style.opacity = overlayOpacity
 
     setTimeout(() => {
       router.push(url)
@@ -168,7 +171,7 @@ export default function SearchBox() {
             height: '9px',
             width: 'clamp(110px, 32%, 190px)',
             borderRadius: '5px',
-            background: 'linear-gradient(90deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.14) 50%, rgba(255,255,255,0.05) 100%)',
+            background: 'linear-gradient(90deg, var(--surface) 0%, var(--ink-3) 50%, var(--surface) 100%)',
             backgroundSize: '200% 100%',
             animation: 'phShimmer 1.5s linear infinite',
             pointerEvents: 'none',

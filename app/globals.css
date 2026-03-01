@@ -171,6 +171,12 @@ html.light body::before { display: none; }
 html.light body { background: #F7F5F0; color: #0F1117; }
 html.light ::-webkit-scrollbar-track { background: #F7F5F0; }
 
+/* Keep dark mode Mars unchanged; hide planet only in light mode for readability. */
+html.light .mars-container,
+html.light .hb-mars-container {
+  display: none !important;
+}
+
 /* ─── BASE ───────────────────────────────────────── */
 *, *::before, *::after {
   box-sizing: border-box;

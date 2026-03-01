@@ -95,7 +95,7 @@ export default function Nav() {
           onMouseLeave={e => {
             e.currentTarget.style.borderColor = 'var(--border)'
             e.currentTarget.style.color = 'var(--text-tertiary)'
-            e.currentTarget.style.background = 'rgba(255,255,255,0.04)'
+            e.currentTarget.style.background = 'var(--btn-bg)'
           }}
         >
           {theme === 'dark' ? <SunIcon /> : <MoonIcon />}

@@ -46,14 +46,14 @@ export default function HomePage() {
             lineHeight: 1,
             letterSpacing: '-0.02em',
             marginBottom: '2rem',
-            color: '#F0EDE8',
+            color: 'var(--text-primary)',
             opacity: 0,
             animation: 'fadeIn 0.35s 0s ease forwards',
             width: '100%',
             maxWidth: '700px',
           }}
         >
-          Forca<em style={{ fontStyle: 'italic', color: '#C9A96E' }}>pedia</em>
+          Forca<em style={{ fontStyle: 'italic', color: 'var(--gold)' }}>pedia</em>
         </h1>
 
         <div
@@ -100,10 +100,10 @@ export default function HomePage() {
           textTransform: 'uppercase',
         }}
       >
-        <Link href="/terms"   style={{ color: 'rgba(240,237,232,0.28)', textDecoration: 'none' }}>Terms</Link>
-        <Link href="/privacy" style={{ color: 'rgba(240,237,232,0.28)', textDecoration: 'none' }}>Privacy</Link>
-        <Link href="/pricing" style={{ color: 'rgba(240,237,232,0.28)', textDecoration: 'none' }}>Pricing</Link>
-        <Link href="/contact" style={{ color: 'rgba(240,237,232,0.28)', textDecoration: 'none' }}>Contact</Link>
+        <Link href="/terms"   style={{ color: 'var(--text-tertiary)', textDecoration: 'none' }}>Terms</Link>
+        <Link href="/privacy" style={{ color: 'var(--text-tertiary)', textDecoration: 'none' }}>Privacy</Link>
+        <Link href="/pricing" style={{ color: 'var(--text-tertiary)', textDecoration: 'none' }}>Pricing</Link>
+        <Link href="/contact" style={{ color: 'var(--text-tertiary)', textDecoration: 'none' }}>Contact</Link>
       </div>
     </>
   )
