@@ -47,42 +47,38 @@ interface HookPayload {
   }
 }
 
-// ── HMAC-SHA256 signature verification ────────────────────────────────────────
-// Supabase sends: Authorization: Bearer v1,<hex(hmac-sha256(body, secret))>
+// ── Svix HMAC-SHA256 signature verification ────────────────────────────────────
+// Supabase uses Svix for hook delivery.
+// Signed content = "{webhook-id}.{webhook-timestamp}.{body}"
+// Header: webhook-signature: v1,<base64(hmac-sha256(signed-content, secret))>
 async function verifyToken(req: Request, rawBody: string): Promise<boolean> {
   if (!SECRET) return true   // skip in dev if secret not set
 
-  const auth = req.headers.get('authorization') ?? ''
-  if (!auth.startsWith('Bearer v1,')) return false
+  const msgId     = req.headers.get('webhook-id')        ?? ''
+  const timestamp = req.headers.get('webhook-timestamp') ?? ''
+  const sigHeader = req.headers.get('webhook-signature') ?? ''
 
-  const receivedHex = auth.slice('Bearer v1,'.length)
+  if (!msgId || !timestamp || !sigHeader) return false
 
+  const signed  = `${msgId}.${timestamp}.${rawBody}`
   const encoder = new TextEncoder()
   const key = await crypto.subtle.importKey(
     'raw', encoder.encode(SECRET),
     { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
   )
 
-  const sigBuf = await crypto.subtle.sign('HMAC', key, encoder.encode(rawBody))
-  const computedHex = Array.from(new Uint8Array(sigBuf))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('')
+  const sigBuf  = await crypto.subtle.sign('HMAC', key, encoder.encode(signed))
+  const computed = btoa(String.fromCharCode(...new Uint8Array(sigBuf)))
 
-  return computedHex === receivedHex
+  // Header may list multiple sigs: "v1,abc v1,def"
+  return sigHeader.split(' ').some(s => s === `v1,${computed}`)
 }
 
 // ── Route handler ──────────────────────────────────────────────────────────────
 export async function POST(req: Request) {
   const rawBody = await req.text()
 
-  // DEBUG — log all headers to find what Supabase actually sends
-  const allHeaders: Record<string, string> = {}
-  req.headers.forEach((val, key) => { allHeaders[key] = key.toLowerCase().includes('auth') ? val.substring(0, 40) : val })
-  console.log('[hook] headers:', JSON.stringify(allHeaders))
-  console.log('[hook] SECRET set:', !!SECRET, '| body length:', rawBody.length)
-
   if (!(await verifyToken(req, rawBody))) {
-    console.log('[hook] signature mismatch — returning 401')
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
