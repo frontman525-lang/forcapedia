@@ -172,6 +172,7 @@ export async function POST(request: Request) {
     }
     return NextResponse.json({ error: 'Failed to save article.' }, { status: 500 })
   }
+  
 
   const wikiTag = wiki ? `  wiki: ${wiki.url}` : '  wiki: none (pure-ai)'
   console.log(`[search] ✓ SAVED  /${finalSlug}${wikiTag}`)

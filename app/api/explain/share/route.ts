@@ -18,7 +18,8 @@ export async function POST(req: NextRequest) {
   if (!text || !explanation || !mode) {
     return NextResponse.json({ error: 'Missing required fields.' }, { status: 400 })
   }
-
+  
+  
   const hash = randomUUID().replace(/-/g, '').slice(0, 12)
 
   const { error } = await supabase.from('explain_shares').insert({
