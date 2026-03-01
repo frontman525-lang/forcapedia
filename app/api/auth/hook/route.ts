@@ -47,32 +47,35 @@ interface HookPayload {
   }
 }
 
-// ── Signature verification ─────────────────────────────────────────────────────
-async function verifySignature(req: Request, rawBody: string): Promise<boolean> {
-  if (!SECRET) return true   // if no secret configured, skip verification in dev
+// ── HMAC-SHA256 signature verification ────────────────────────────────────────
+// Supabase sends: Authorization: Bearer v1,<hex(hmac-sha256(body, secret))>
+async function verifyToken(req: Request, rawBody: string): Promise<boolean> {
+  if (!SECRET) return true   // skip in dev if secret not set
 
-  const header = req.headers.get('x-supabase-signature')
-  if (!header) return false
+  const auth = req.headers.get('authorization') ?? ''
+  if (!auth.startsWith('Bearer v1,')) return false
+
+  const receivedHex = auth.slice('Bearer v1,'.length)
 
   const encoder = new TextEncoder()
   const key = await crypto.subtle.importKey(
     'raw', encoder.encode(SECRET),
-    { name: 'HMAC', hash: 'SHA-256' }, false, ['verify'],
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
   )
 
-  // Header format: sha256=<hex>
-  const hexSig  = header.replace('sha256=', '')
-  const sigBuf  = new Uint8Array(hexSig.match(/.{2}/g)!.map(h => parseInt(h, 16)))
-  const bodyBuf = encoder.encode(rawBody)
+  const sigBuf = await crypto.subtle.sign('HMAC', key, encoder.encode(rawBody))
+  const computedHex = Array.from(new Uint8Array(sigBuf))
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('')
 
-  return crypto.subtle.verify('HMAC', key, sigBuf, bodyBuf)
+  return computedHex === receivedHex
 }
 
 // ── Route handler ──────────────────────────────────────────────────────────────
 export async function POST(req: Request) {
   const rawBody = await req.text()
 
-  if (!(await verifySignature(req, rawBody))) {
+  if (!(await verifyToken(req, rawBody))) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
