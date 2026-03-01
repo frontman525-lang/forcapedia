@@ -62,7 +62,7 @@ export function PaymentSuccessEmail({
               ['Order ID',     orderId],
               ['Date',         date],
               nextBilling ? ['Next billing', nextBilling] : null,
-            ].filter(Boolean).map(([k, v]) => (
+            ].filter((r): r is string[] => r !== null).map(([k, v]) => (
               <div key={k as string} style={summaryRow}>
                 <Text style={summaryKey}>{k}</Text>
                 <Text style={summaryVal}>{v}</Text>
