@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation'
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import Nav from '@/components/Nav'
+import ExplainShareActions from '@/components/ExplainShareActions'
 import { createClient } from '@/lib/supabase/server'
 
 interface Props {
@@ -119,7 +120,7 @@ export default async function ExplainSharePage({ params }: Props) {
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
-            gap: '1rem',
+            gap: '1.25rem',
             paddingTop: '2rem',
             borderTop: '1px solid var(--border)',
             textAlign: 'center',
@@ -132,6 +133,9 @@ export default async function ExplainSharePage({ params }: Props) {
             }}>
               Generated on Forcapedia — the living encyclopedia
             </p>
+
+            {/* Re-share buttons */}
+            <ExplainShareActions url={`${process.env.NEXT_PUBLIC_SITE_URL ?? ''}/explain/${share.hash}`} explanation={share.explanation} />
 
             <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', justifyContent: 'center' }}>
               {share.article_slug && (

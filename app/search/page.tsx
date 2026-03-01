@@ -264,32 +264,67 @@ function SearchContent() {
 
   const openResult = useCallback(async (title: string, idx: number) => {
     setNavigating(idx)
+
+    // Auth check
+    let user: { id: string } | null = null
     try {
       const { data } = await supabase.auth.getUser()
-      if (!data.user) {
-        setNavigating(null)
-        router.push(loginRedirectUrlForTitle(title))
-        return
-      }
-      const res = await fetch('/api/search', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: title }),
-      })
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
+      user = data.user
+    } catch {
+      user = null
+    }
+
+    if (!user) {
+      setNavigating(null)
+      router.push(loginRedirectUrlForTitle(title))
+      return
+    }
+
+    // Fetch article — up to 3 attempts (1 initial + 2 retries on 5xx/network errors)
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await new Promise<void>(r => setTimeout(r, 800))
+
+      try {
+        const res = await fetch('/api/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: title }),
+        })
+
+        if (res.ok) {
+          const { slug } = await res.json()
+          router.push(`/article/${slug}`)
+          return
+        }
+
         if (res.status === 401) {
           setNavigating(null)
           router.push(loginRedirectUrlForTitle(title))
           return
         }
-        showAlert(err.error ?? 'Failed to load article.', 'error')
-        setNavigating(null); return
+
+        // 4xx client error — don't retry
+        if (res.status < 500) {
+          const err = await res.json().catch(() => ({}))
+          showAlert(err.error ?? 'Failed to load article.', 'error')
+          setNavigating(null)
+          return
+        }
+
+        // 5xx server error — retry unless last attempt
+        if (attempt === 2) {
+          showAlert('Failed to load article. Please try again.', 'error')
+          setNavigating(null)
+          return
+        }
+      } catch {
+        // Network error — retry unless last attempt
+        if (attempt === 2) {
+          showAlert('Failed to load article. Check your connection.', 'error')
+          setNavigating(null)
+          return
+        }
       }
-      const { slug } = await res.json()
-      router.push(`/article/${slug}`)
-    } catch {
-      showAlert('Failed to load article. Check your connection.', 'error')
-      setNavigating(null)
     }
   }, [loginRedirectUrlForTitle, router, showAlert, supabase.auth])
 

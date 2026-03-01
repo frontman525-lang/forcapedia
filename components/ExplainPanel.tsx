@@ -42,6 +42,9 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
   const [isMobile, setIsMobile] = useState(false)
   const [panelVisible, setPanelVisible] = useState(false) // for CSS transition
   const [isSharing, setIsSharing] = useState(false)
+  const [shareUrl, setShareUrl] = useState<string | null>(null)
+  const [linkCopied, setLinkCopied] = useState(false)
+  const [toolbarCopied, setToolbarCopied] = useState(false)
 
   const explanationRef = useRef<HTMLDivElement>(null)
   // Track whether a pointer (mouse/touch) is currently held down to suppress
@@ -204,6 +207,8 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
     setExplanation('')
     setError(null)
     setUsage(null)
+    setShareUrl(null)
+    setLinkCopied(false)
     setPanelOpen(true)
     setIsLoading(true)
     setSelection(null)
@@ -285,9 +290,17 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
     runExplain(currentText, newMode)
   }
 
-  // ── Share — creates a unique hash URL for this specific explanation ────────
-  const handleShare = async () => {
-    if (!explanation || isLoading || isSharing) return
+  const handleToolbarCopy = () => {
+    if (!selection) return
+    navigator.clipboard.writeText(selection.text).catch(() => null)
+    setToolbarCopied(true)
+    setTimeout(() => setToolbarCopied(false), 1800)
+  }
+
+  // ── Create share link (returns the URL, caches it in state) ─────────────
+  const createShareLink = async (): Promise<string | null> => {
+    if (shareUrl) return shareUrl
+    if (!explanation || isLoading) return null
     setIsSharing(true)
     try {
       const res = await fetch('/api/explain/share', {
@@ -297,24 +310,42 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
       })
       if (res.status === 401) {
         showAlert('Sign in to share an explanation.', 'error')
-        return
+        return null
       }
       const data = await res.json()
       if (!data.hash) {
         showAlert('Could not create share link. Try again.', 'error')
-        return
+        return null
       }
       const url = `${window.location.origin}/explain/${data.hash}`
-      if (navigator.share && isMobile) {
-        await navigator.share({ title: 'Forcapedia Explanation', url }).catch(() => null)
-      } else {
-        await navigator.clipboard.writeText(url)
-        showAlert('Explanation link copied!', 'success')
-      }
+      setShareUrl(url)
+      return url
     } catch {
       showAlert('Could not create share link.', 'error')
+      return null
     } finally {
       setIsSharing(false)
+    }
+  }
+
+  // Copy link — one tap
+  const handleCopyLink = async () => {
+    const url = await createShareLink()
+    if (!url) return
+    await navigator.clipboard.writeText(url)
+    setLinkCopied(true)
+    setTimeout(() => setLinkCopied(false), 2000)
+  }
+
+  // Share — prefilled native share or WhatsApp fallback
+  const handleShare = async () => {
+    const url = await createShareLink()
+    if (!url) return
+    const shareText = `Check out this AI explanation on Forcapedia: ${url}`
+    if (navigator.share) {
+      await navigator.share({ title: 'Forcapedia Explanation', text: shareText, url }).catch(() => null)
+    } else {
+      window.open(`https://wa.me/?text=${encodeURIComponent(shareText)}`, '_blank')
     }
   }
 
@@ -324,6 +355,8 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
     setError(null)
     setCurrentText('')
     setUsage(null)
+    setShareUrl(null)
+    setLinkCopied(false)
   }
 
   // ── Shared panel content ─────────────────────────────────────────────────
@@ -508,39 +541,87 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
           gap: '0.5rem',
           paddingBottom: isMobile ? 'calc(0.875rem + env(safe-area-inset-bottom, 0px))' : '0.875rem',
         }}>
-          <button
-            onClick={handleShare}
-            disabled={!explanation || isLoading || isSharing}
-            style={{
-              display: 'flex', alignItems: 'center', gap: '0.35rem',
-              padding: '5px 12px',
-              border: '1px solid var(--border)',
-              borderRadius: '100px',
-              background: 'transparent',
-              color: 'var(--text-secondary)',
-              fontFamily: 'var(--font-mono)',
-              fontSize: '10px',
-              letterSpacing: '0.06em',
-              cursor: !explanation || isLoading || isSharing ? 'default' : 'pointer',
-              opacity: !explanation || isLoading || isSharing ? 0.4 : 1,
-              transition: 'all 0.15s',
-            }}
-            onMouseEnter={e => {
-              if (explanation && !isLoading && !isSharing) {
-                e.currentTarget.style.borderColor = 'var(--border-gold)'
-                e.currentTarget.style.color = 'var(--gold)'
-              }
-            }}
-            onMouseLeave={e => {
-              e.currentTarget.style.borderColor = 'var(--border)'
-              e.currentTarget.style.color = 'var(--text-secondary)'
-            }}
-          >
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13" />
-            </svg>
-            {isSharing ? 'Sharing…' : 'Share explanation'}
-          </button>
+          <div style={{ display: 'flex', gap: '0.4rem' }}>
+            {/* Copy link */}
+            <button
+              onClick={handleCopyLink}
+              disabled={!explanation || isLoading || isSharing}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '0.35rem',
+                padding: '5px 12px',
+                border: '1px solid var(--border)',
+                borderRadius: '100px',
+                background: linkCopied ? 'rgba(34,197,94,0.08)' : 'transparent',
+                color: linkCopied ? '#22c55e' : 'var(--text-secondary)',
+                borderColor: linkCopied ? 'rgba(34,197,94,0.4)' : 'var(--border)',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '10px',
+                letterSpacing: '0.06em',
+                cursor: !explanation || isLoading || isSharing ? 'default' : 'pointer',
+                opacity: !explanation || isLoading || isSharing ? 0.4 : 1,
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={e => {
+                if (explanation && !isLoading && !isSharing && !linkCopied) {
+                  e.currentTarget.style.borderColor = 'var(--border-gold)'
+                  e.currentTarget.style.color = 'var(--gold)'
+                }
+              }}
+              onMouseLeave={e => {
+                if (!linkCopied) {
+                  e.currentTarget.style.borderColor = 'var(--border)'
+                  e.currentTarget.style.color = 'var(--text-secondary)'
+                }
+              }}
+            >
+              {linkCopied ? (
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              ) : (
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                  <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" />
+                </svg>
+              )}
+              {linkCopied ? 'Copied!' : 'Copy link'}
+            </button>
+
+            {/* Share */}
+            <button
+              onClick={handleShare}
+              disabled={!explanation || isLoading || isSharing}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '0.35rem',
+                padding: '5px 12px',
+                border: '1px solid var(--border)',
+                borderRadius: '100px',
+                background: 'transparent',
+                color: 'var(--text-secondary)',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '10px',
+                letterSpacing: '0.06em',
+                cursor: !explanation || isLoading || isSharing ? 'default' : 'pointer',
+                opacity: !explanation || isLoading || isSharing ? 0.4 : 1,
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={e => {
+                if (explanation && !isLoading && !isSharing) {
+                  e.currentTarget.style.borderColor = 'var(--border-gold)'
+                  e.currentTarget.style.color = 'var(--gold)'
+                }
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.borderColor = 'var(--border)'
+                e.currentTarget.style.color = 'var(--text-secondary)'
+              }}
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13" />
+              </svg>
+              {isSharing ? 'Sharing…' : 'Share'}
+            </button>
+          </div>
 
           {/* Usage counter */}
           {usage && (
@@ -634,6 +715,41 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
                   </button>
                 </div>
               ))}
+
+              {/* Copy separator + button */}
+              <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 2px' }} />
+              <button
+                onMouseDown={e => e.preventDefault()}
+                onClick={handleToolbarCopy}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '0.3rem',
+                  padding: '5px 12px',
+                  borderRadius: '100px',
+                  border: 'none',
+                  background: toolbarCopied ? 'rgba(34,197,94,0.12)' : 'transparent',
+                  color: toolbarCopied ? '#22c55e' : 'var(--text-secondary)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '11px',
+                  letterSpacing: '0.06em',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s',
+                  whiteSpace: 'nowrap',
+                }}
+                onMouseEnter={e => {
+                  if (!toolbarCopied) {
+                    e.currentTarget.style.background = 'var(--gold-dim)'
+                    e.currentTarget.style.color = 'var(--gold)'
+                  }
+                }}
+                onMouseLeave={e => {
+                  if (!toolbarCopied) {
+                    e.currentTarget.style.background = 'transparent'
+                    e.currentTarget.style.color = 'var(--text-secondary)'
+                  }
+                }}
+              >
+                {toolbarCopied ? '✓ Copied' : 'Copy'}
+              </button>
             </>
           )}
 
@@ -733,6 +849,25 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
                 }}
               >
                 For Kids
+              </button>
+              <button
+                onMouseDown={e => e.preventDefault()}
+                onClick={handleToolbarCopy}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: '100px',
+                  border: toolbarCopied ? '1px solid rgba(34,197,94,0.4)' : '1px solid var(--border)',
+                  background: toolbarCopied ? 'rgba(34,197,94,0.08)' : 'transparent',
+                  color: toolbarCopied ? '#22c55e' : 'var(--text-secondary)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '11px',
+                  letterSpacing: '0.06em',
+                  cursor: 'pointer',
+                  flexShrink: 0,
+                  transition: 'all 0.15s',
+                }}
+              >
+                {toolbarCopied ? '✓' : 'Copy'}
               </button>
             </>
           )}

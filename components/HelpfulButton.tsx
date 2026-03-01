@@ -12,6 +12,7 @@ export default function HelpfulButton({ articleSlug }: HelpfulButtonProps) {
   const [voted, setVoted] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [toggling, setToggling] = useState(false)
+  const [showSignInHint, setShowSignInHint] = useState(false)
 
   const fetchVotes = useCallback(async () => {
     try {
@@ -59,10 +60,11 @@ export default function HelpfulButton({ articleSlug }: HelpfulButtonProps) {
       const res = await fetch(`/api/votes/${articleSlug}`, { method: 'POST' })
 
       if (res.status === 401) {
-        // Not logged in — revert optimistic update and redirect
+        // Not logged in — revert optimistic update, show inline hint
         setVoted(wasVoted)
         setCount(prev => wasVoted ? prev + 1 : prev - 1)
-        window.location.href = '/auth'
+        setShowSignInHint(true)
+        setTimeout(() => setShowSignInHint(false), 4000)
         return
       }
 
@@ -144,7 +146,20 @@ export default function HelpfulButton({ articleSlug }: HelpfulButtonProps) {
         {voted ? 'Helpful!' : 'Helpful?'}
       </button>
 
-      {count > 0 && (
+      {showSignInHint ? (
+        <span
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: '11px',
+            color: 'var(--text-secondary)',
+            letterSpacing: '0.04em',
+            animation: 'fadeIn 0.2s ease',
+          }}
+        >
+          <a href="/auth" style={{ color: 'var(--gold)', textDecoration: 'none' }}>Sign in</a>
+          {' '}to vote
+        </span>
+      ) : count > 0 ? (
         <span
           style={{
             fontFamily: 'var(--font-mono)',
@@ -156,7 +171,7 @@ export default function HelpfulButton({ articleSlug }: HelpfulButtonProps) {
           {count.toLocaleString()}{' '}
           {count === 1 ? 'student found this helpful' : 'students found this helpful'}
         </span>
-      )}
+      ) : null}
     </div>
   )
 }

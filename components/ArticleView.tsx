@@ -59,7 +59,14 @@ function slugifyHeading(text: string): string {
     .replace(/-+/g, '-')
 }
 
-function buildArticleContentWithToc(content: string): { html: string; items: TocItem[] } {
+interface ArticleSection {
+  id: string
+  heading: string
+  level: 2 | 3
+  contentHtml: string // the h-tag + everything until the next h2
+}
+
+function buildArticleContentWithToc(content: string): { html: string; items: TocItem[]; sections: ArticleSection[] } {
   const items: TocItem[] = []
   const usedIds = new Map<string, number>()
 
@@ -85,164 +92,37 @@ function buildArticleContentWithToc(content: string): { html: string; items: Toc
     },
   )
 
-  return { html, items }
-}
-
-function calcReadingTime(html: string): number {
-  const words = stripHtml(html).split(/\s+/).filter(w => w.length > 0).length
-  return Math.max(1, Math.ceil(words / 200))
-}
-
-// ── Study Together Button ──────────────────────────────────────────────────────
-function StudyTogetherButton({
-  articleSlug, articleTitle, isLoggedIn,
-}: { articleSlug: string; articleTitle: string; isLoggedIn: boolean }) {
-  const router = useRouter()
-  const supabase = createClient()
-  const [tier, setTier]         = useState<string | null>(null)
-  const [creating, setCreating] = useState(false)
-  const [readers, setReaders]   = useState(0)
-  const [copied, setCopied]     = useState(false)
-  const [roomLink, setRoomLink] = useState<string | null>(null)
-  const [roomCode, setRoomCode] = useState<string | null>(null)
-
-  // Load tier
-  useEffect(() => {
-    if (!isLoggedIn) return
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (!user) return
-      supabase.from('user_usage').select('tier').eq('user_id', user.id).single()
-        .then(({ data }) => setTier(data?.tier ?? 'free'))
+  // Build sections by splitting at <h2> boundaries (for mobile accordion)
+  const sections: ArticleSection[] = []
+  const h2Items = items.filter(i => i.level === 2)
+  if (h2Items.length > 0) {
+    // Split on lookahead at each <h2 ...> opening tag
+    const rawParts = html.split(/(?=<h2[^>]+id=")/i)
+    rawParts.forEach((chunk, i) => {
+      if (i === 0 && !chunk.trim().startsWith('<h2')) return // preamble before first h2
+      const idMatch = chunk.match(/<h2[^>]*id="([^"]+)"/i)
+      if (!idMatch) return
+      const id = idMatch[1]
+      const tocItem = items.find(it => it.id === id)
+      if (!tocItem) return
+      sections.push({
+        id,
+        heading: tocItem.text,
+        level: tocItem.level,
+        contentHtml: chunk,
+      })
     })
-  }, [isLoggedIn]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Live reader presence
-  useEffect(() => {
-    const channel = supabase.channel(`article-readers:${articleSlug}`, {
-      config: { presence: { key: `reader-${Math.random()}` } },
-    })
-    channel.on('presence', { event: 'sync' }, () => {
-      setReaders(Object.keys(channel.presenceState()).length)
-    }).subscribe(async status => {
-      if (status === 'SUBSCRIBED') await channel.track({ slug: articleSlug })
-    })
-    return () => { supabase.removeChannel(channel) }
-  }, [articleSlug]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function handleClick() {
-    if (!isLoggedIn) { router.push(`/login?next=/article/${articleSlug}`); return }
-    if (tier === 'free') {
-      router.push('/pricing')
-      return
-    }
-    setCreating(true)
-    const res = await fetch('/api/rooms/create', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ articleSlug, articleTitle }),
-    })
-    if (res.ok) {
-      const { code } = await res.json()
-      setRoomCode(code)
-      setRoomLink(`${window.location.origin}/room/${code}`)
-    } else {
-      const { error } = await res.json()
-      alert(error || 'Could not create room.')
-    }
-    setCreating(false)
   }
 
-  if (roomLink) {
-    const wa = `https://wa.me/?text=${encodeURIComponent(`Join my Forcapedia study room → ${roomLink}`)}`
-    return (
-      <div style={{
-        margin: '2rem 0', padding: '1.25rem',
-        background: 'rgba(111,207,151,0.06)', border: '1px solid rgba(111,207,151,0.2)',
-        borderRadius: '16px',
-      }}>
-        <p style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#6FCF97', marginBottom: '0.75rem' }}>
-          Room created! Share this link:
-        </p>
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <code style={{
-            flex: 1, minWidth: 0, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
-            borderRadius: '8px', padding: '0.5rem 0.75rem', fontSize: '13px', color: '#6FCF97',
-            fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}>
-            {roomLink}
-          </code>
-          <button onClick={() => { navigator.clipboard.writeText(roomLink); setCopied(true); setTimeout(() => setCopied(false), 2000) }} style={{
-            background: 'rgba(111,207,151,0.1)', border: '1px solid rgba(111,207,151,0.2)',
-            borderRadius: '8px', color: '#6FCF97', fontSize: '12px', padding: '0 1rem', cursor: 'pointer', flexShrink: 0,
-          }}>
-            {copied ? '✓ Copied' : 'Copy'}
-          </button>
-          <a href={wa} target="_blank" rel="noopener noreferrer" style={{
-            display: 'flex', alignItems: 'center', gap: '0.3rem',
-            background: 'rgba(37,211,102,0.1)', border: '1px solid rgba(37,211,102,0.2)',
-            borderRadius: '8px', color: '#25D166', fontSize: '12px', padding: '0 1rem', textDecoration: 'none', flexShrink: 0,
-          }}>
-            WhatsApp
-          </a>
-          <button onClick={() => router.push(`/room/${roomCode}`)} style={{
-            background: 'rgba(201,169,110,0.12)', border: '1px solid rgba(201,169,110,0.2)',
-            borderRadius: '8px', color: '#C9A96E', fontSize: '12px', padding: '0 1rem', cursor: 'pointer', flexShrink: 0,
-          }}>
-            Enter room →
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  const isPaid = tier === 'tier1' || tier === 'tier2'
-
-  return (
-    <div style={{ margin: '2rem 0' }}>
-      {/* Live reader count */}
-      {readers > 1 && (
-        <p style={{
-          fontFamily: 'var(--font-mono)', fontSize: '11px', letterSpacing: '0.06em',
-          color: 'rgba(111,207,151,0.7)', marginBottom: '0.75rem',
-          display: 'flex', alignItems: 'center', gap: '0.4rem',
-        }}>
-          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#6FCF97', display: 'inline-block', animation: 'pulseGold 2s ease-in-out infinite' }} />
-          {readers} students reading this right now
-        </p>
-      )}
-      <button
-        onClick={handleClick}
-        disabled={creating}
-        style={{
-          display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
-          background: isPaid ? 'rgba(111,207,151,0.08)' : 'rgba(255,255,255,0.03)',
-          border: `1px solid ${isPaid ? 'rgba(111,207,151,0.25)' : 'rgba(255,255,255,0.08)'}`,
-          borderRadius: '12px', padding: '0.75rem 1.25rem', cursor: 'pointer',
-          color: isPaid ? '#6FCF97' : 'rgba(240,237,232,0.5)', fontSize: '14px',
-          fontFamily: 'var(--font-sans)', transition: 'all 0.2s',
-        }}
-        onMouseEnter={e => { if (isPaid) { e.currentTarget.style.background = 'rgba(111,207,151,0.14)'; e.currentTarget.style.borderColor = 'rgba(111,207,151,0.4)' } }}
-        onMouseLeave={e => { e.currentTarget.style.background = isPaid ? 'rgba(111,207,151,0.08)' : 'rgba(255,255,255,0.03)'; e.currentTarget.style.borderColor = isPaid ? 'rgba(111,207,151,0.25)' : 'rgba(255,255,255,0.08)' }}
-      >
-        <span style={{ fontSize: '16px' }}>{!isPaid ? '🔒' : '📖'}</span>
-        <span>{creating ? 'Creating room…' : 'Study Together'}</span>
-        {isPaid && <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', opacity: 0.6 }}>→</span>}
-        {!isPaid && isLoggedIn && (
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: '#C9A96E', marginLeft: '0.25rem' }}>
-            Scholar+
-          </span>
-        )}
-      </button>
-      {!isPaid && isLoggedIn && tier !== null && (
-        <p style={{ marginTop: '0.4rem', fontSize: '12px', color: 'rgba(240,237,232,0.3)' }}>
-          <Link href="/pricing" style={{ color: '#C9A96E' }}>Upgrade to Scholar</Link> to create study rooms
-        </p>
-      )}
-    </div>
-  )
+  return { html, items, sections }
 }
+
+
+
 
 export default function ArticleView({ article }: { article: Article }) {
   const supabase = createClient()
+  const router = useRouter()
   const articleContentRef = useRef<HTMLDivElement | null>(null)
   const tocButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({})
 
@@ -253,13 +133,20 @@ export default function ArticleView({ article }: { article: Article }) {
   const [related, setRelated] = useState<RelatedArticle[]>([])
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [readSlugs, setReadSlugs] = useState<Set<string>>(new Set())
+  const [doubtTooltip, setDoubtTooltip] = useState(false)
+  const [articleCopied, setArticleCopied] = useState(false)
+  const [studyMode, setStudyMode] = useState<'solo' | 'together'>('solo')
+  const [studyCreating, setStudyCreating] = useState(false)
+  const [studyModal, setStudyModal] = useState(false)
+  const [studyJoinCode, setStudyJoinCode] = useState('')
+  const [studyTier, setStudyTier] = useState<string | null>(null)
+  const [openSectionId, setOpenSectionId] = useState('')
+  const recordedRef = useRef(false)
 
-  const { html: contentWithAnchors, items: tocItems } = useMemo(
+  const { html: contentWithAnchors, items: tocItems, sections: articleSections } = useMemo(
     () => buildArticleContentWithToc(article.content),
     [article.content],
   )
-
-  const readingTime = useMemo(() => calcReadingTime(article.content), [article.content])
 
   // Badge date: prefer AI-provided event_date, else fall back to month+year of verified_at
   const badgeDate = useMemo(() => {
@@ -278,10 +165,17 @@ export default function ArticleView({ article }: { article: Article }) {
 
   // Record this article as read + fetch user's read history for personalisation
   useEffect(() => {
+    if (recordedRef.current) return
+    recordedRef.current = true
+
     async function recordAndPersonalise() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
       setIsLoggedIn(true)
+
+      // Load tier for study toggle
+      supabase.from('user_usage').select('tier').eq('user_id', user.id).single()
+        .then(({ data, error }) => { if (!error) setStudyTier(data?.tier ?? 'free') })
 
       // Fire-and-forget: record the read (upsert updates read_at on revisit)
       fetch('/api/history', {
@@ -348,6 +242,8 @@ export default function ArticleView({ article }: { article: Article }) {
     setActiveSectionId(prev =>
       tocItems.some(item => item.id === prev) ? prev : (tocItems[0]?.id ?? ''),
     )
+    // Initialize accordion: open first section by default
+    setOpenSectionId(prev => prev || (tocItems[0]?.id ?? ''))
   }, [tocItems])
 
   // Scroll spy ─────────────────────────────────────────────────
@@ -410,11 +306,23 @@ export default function ArticleView({ article }: { article: Article }) {
     target.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }, [activeSectionId])
 
+  // Close study modal on Escape
+  useEffect(() => {
+    if (!studyModal) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setStudyModal(false); setStudyMode('solo') }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [studyModal])
+
   function scrollToSection(id: string) {
     const heading = document.getElementById(id)
     if (!heading) return
     setActiveSectionId(id)
-    heading.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    // Offset by 80px to avoid heading hiding under the sticky nav bar
+    const top = heading.getBoundingClientRect().top + window.scrollY - 80
+    window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
   }
 
   function handleTocWheel(e: React.WheelEvent<HTMLElement>) {
@@ -465,6 +373,195 @@ export default function ArticleView({ article }: { article: Article }) {
         background: 'var(--ink)',
       }}
     >
+      {/* ══ [Solo | Study Together] — compact full-width top control bar ════ */}
+      <div style={{
+        width: '100%',
+        borderBottom: '1px solid var(--border)',
+        display: 'flex',
+        justifyContent: 'center',
+        padding: '6px 0',
+        background: 'var(--ink)',
+      }}>
+        <div style={{
+          display: 'inline-flex',
+          background: 'var(--ink-2)',
+          border: '1px solid var(--border)',
+          borderRadius: '100px',
+          padding: '3px',
+          gap: '2px',
+        }}>
+          {(['solo', 'together'] as const).map(m => (
+            <button
+              key={m}
+              onClick={() => {
+                if (m === 'solo') { setStudyMode('solo'); setStudyModal(false); return }
+                if (!isLoggedIn) { router.push(`/login?next=/article/${article.slug}`); return }
+                setStudyMode('together')
+                setStudyModal(true)
+              }}
+              style={{
+                padding: '7px 22px',
+                borderRadius: '100px',
+                border: 'none',
+                background: studyMode === m ? 'var(--gold-dim)' : 'transparent',
+                color: studyMode === m ? 'var(--gold)' : 'var(--text-tertiary)',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '11px',
+                letterSpacing: '0.08em',
+                cursor: 'pointer',
+                transition: 'all 0.18s',
+              }}
+            >
+              {m === 'solo' ? 'Solo' : 'Study Together'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ══ Study Together modal ══════════════════════════════════════════════ */}
+      {studyModal && (
+        <>
+          {/* Backdrop */}
+          <div
+            onClick={() => { setStudyModal(false); setStudyMode('solo') }}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 998,
+              backdropFilter: 'blur(10px) saturate(0.6)',
+              WebkitBackdropFilter: 'blur(10px) saturate(0.6)',
+              background: 'rgba(0,0,0,0.3)',
+              animation: 'fadeIn 0.18s ease',
+            }}
+          />
+          {/* Modal card */}
+          <div style={{
+            position: 'fixed', top: '50%', left: '50%',
+            transform: 'translate(-50%, -50%)',
+            zIndex: 999,
+            width: 'min(460px, calc(100vw - 2rem))',
+            background: 'var(--ink-2)',
+            border: '1px solid var(--border)',
+            borderRadius: '24px',
+            padding: '2rem',
+            boxShadow: '0 32px 80px rgba(0,0,0,0.7)',
+            animation: 'modalIn 0.22s cubic-bezier(0.34, 1.1, 0.64, 1)',
+          }}>
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
+              <div>
+                <h2 style={{
+                  fontFamily: 'var(--font-serif)', fontSize: '1.5rem', fontWeight: 300,
+                  color: 'var(--text-primary)', marginBottom: '0.3rem',
+                }}>
+                  Study Together
+                </h2>
+                <p style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-tertiary)', letterSpacing: '0.04em' }}>
+                  Collaborate live while reading.
+                </p>
+              </div>
+              <button
+                onClick={() => { setStudyModal(false); setStudyMode('solo') }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: '2px', flexShrink: 0 }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M18 6L6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Create Room — or upgrade if free */}
+            {studyTier === null ? (
+              <div style={{ textAlign: 'center', padding: '1rem 0', fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-tertiary)' }}>
+                Loading…
+              </div>
+            ) : studyTier === 'free' ? (
+              <div style={{
+                padding: '1rem', borderRadius: '14px', marginBottom: '1.25rem',
+                background: 'rgba(201,169,110,0.05)', border: '1px solid rgba(201,169,110,0.15)',
+                textAlign: 'center',
+              }}>
+                <p style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-tertiary)', marginBottom: '0.5rem', letterSpacing: '0.04em' }}>
+                  Study rooms require Scholar plan
+                </p>
+                <Link
+                  href="/pricing"
+                  onClick={() => setStudyModal(false)}
+                  style={{ color: 'var(--gold)', fontFamily: 'var(--font-mono)', fontSize: '12px', letterSpacing: '0.06em' }}
+                >
+                  Upgrade to Scholar →
+                </Link>
+              </div>
+            ) : (
+              <button
+                onClick={async () => {
+                  setStudyCreating(true)
+                  try {
+                    const res = await fetch('/api/rooms/create', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ articleSlug: article.slug, articleTitle: article.title }),
+                    })
+                    if (res.ok) {
+                      const { code } = await res.json()
+                      router.push(`/room/${code}`)
+                    }
+                  } finally {
+                    setStudyCreating(false)
+                  }
+                }}
+                disabled={studyCreating}
+                style={{
+                  width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+                  padding: '0.875rem', marginBottom: '1.25rem',
+                  background: 'var(--gold-dim)', border: '1px solid var(--border-gold)', borderRadius: '14px',
+                  color: 'var(--gold)', fontFamily: 'var(--font-mono)', fontSize: '12px', letterSpacing: '0.08em',
+                  cursor: studyCreating ? 'default' : 'pointer',
+                  opacity: studyCreating ? 0.7 : 1, transition: 'all 0.15s',
+                }}
+              >
+                {studyCreating ? 'Creating room…' : '+ Create Room'}
+              </button>
+            )}
+
+            {/* Divider */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.25rem' }}>
+              <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-tertiary)', letterSpacing: '0.06em' }}>or</span>
+              <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
+            </div>
+
+            {/* Join existing room */}
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <input
+                type="text"
+                placeholder="Enter room code…"
+                value={studyJoinCode}
+                onChange={e => setStudyJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+                onKeyDown={e => { if (e.key === 'Enter' && studyJoinCode) router.push(`/room/${studyJoinCode}`) }}
+                style={{
+                  flex: 1, background: 'var(--ink-3)', border: '1px solid var(--border)', borderRadius: '10px',
+                  padding: '0.625rem 0.875rem', fontFamily: 'var(--font-mono)', fontSize: '12px', letterSpacing: '0.08em',
+                  color: 'var(--text-primary)', outline: 'none',
+                }}
+              />
+              <button
+                onClick={() => { if (studyJoinCode) router.push(`/room/${studyJoinCode}`) }}
+                disabled={!studyJoinCode}
+                style={{
+                  padding: '0.625rem 1.25rem', borderRadius: '10px', flexShrink: 0,
+                  background: studyJoinCode ? 'var(--ink-3)' : 'transparent',
+                  border: '1px solid var(--border)',
+                  color: studyJoinCode ? 'var(--text-primary)' : 'var(--text-tertiary)',
+                  fontFamily: 'var(--font-mono)', fontSize: '12px', letterSpacing: '0.06em',
+                  cursor: studyJoinCode ? 'pointer' : 'default', transition: 'all 0.15s',
+                }}
+              >
+                Join →
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
       <div className={`article-layout ${hasToc ? 'has-toc' : ''}`} style={layoutStyle}>
 
         {/* ── Desktop Fixed Sidebar ─────────────────────── */}
@@ -544,25 +641,33 @@ export default function ArticleView({ article }: { article: Article }) {
               })}
             </nav>
 
-            {/* Reading time at bottom of sidebar */}
-            <div
-              style={{
-                marginTop: '1.5rem',
-                paddingTop: '0.75rem',
-                borderTop: '1px solid var(--border)',
-                fontFamily: 'var(--font-mono)',
-                fontSize: '10px',
-                letterSpacing: '0.08em',
-                color: 'var(--text-tertiary)',
-              }}
-            >
-              {readingTime} min read
+            {/* Active pill at bottom of sidebar */}
+            <div style={{ marginTop: '1.5rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)' }}>
+              <div
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.38rem',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '10px',
+                  letterSpacing: '0.08em',
+                  color: 'rgba(134,239,172,0.85)',
+                  background: 'rgba(34,197,94,0.07)',
+                  border: '1px solid rgba(34,197,94,0.22)',
+                  padding: '3px 10px',
+                  borderRadius: '100px',
+                  animation: 'activePillGlow 3.5s ease-in-out infinite',
+                }}
+              >
+                <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#22c55e', display: 'inline-block', flexShrink: 0, boxShadow: '0 0 4px rgba(34,197,94,0.6)' }} />
+                Active
+              </div>
             </div>
           </aside>
         )}
 
         {/* ── Main Content ──────────────────────────────── */}
-        <div style={{ minWidth: 0 }}>
+        <div ref={articleContentRef} style={{ minWidth: 0 }}>
 
           {/* Breadcrumb */}
           <div
@@ -636,16 +741,18 @@ export default function ArticleView({ article }: { article: Article }) {
             </div>
           )}
 
-          {/* Badges row — Verified · date | hint | reading time | Wikipedia */}
+          {/* Badges row — Verified · date | "? Doubt" | Active | [share button] */}
           <div
             style={{
               display: 'flex',
-              flexWrap: 'wrap',
               alignItems: 'center',
+              justifyContent: 'space-between',
               gap: '0.5rem',
               marginBottom: '1.75rem',
             }}
           >
+          {/* Left: pills */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.5rem' }}>
             {/* Verified badge — shows event_date or month+year of verified_at */}
             <div
               style={{
@@ -676,85 +783,143 @@ export default function ArticleView({ article }: { article: Article }) {
               Verified {'\u00B7'} {badgeDate}
             </div>
 
-            {/* Explain hint — inline beside Verified badge */}
-            <div style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '0.35rem',
-              padding: '4px 11px 4px 8px',
-              borderRadius: '100px',
-              border: '1px solid var(--border-gold)',
-              background: 'var(--gold-glow)',
-              fontFamily: 'var(--font-mono)',
-              fontSize: '10px',
-              letterSpacing: '0.08em',
-              color: 'var(--text-tertiary)',
-              userSelect: 'none',
-            }}>
-              <span style={{ color: 'var(--gold)', animation: 'pulseGold 2.5s ease-in-out infinite', fontSize: '8px', lineHeight: 1 }}>✦</span>
-              Highlight text — AI explains it
+            {/* "? Doubt" pill — animated, tooltip on hover */}
+            <div
+              style={{ position: 'relative', display: 'inline-flex' }}
+              onMouseEnter={() => setDoubtTooltip(true)}
+              onMouseLeave={() => setDoubtTooltip(false)}
+            >
+              <div style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.35rem',
+                padding: '4px 11px',
+                borderRadius: '100px',
+                border: doubtTooltip
+                  ? '1px solid rgba(240,237,232,0.16)'
+                  : '1px solid var(--border)',
+                background: doubtTooltip
+                  ? 'rgba(255,255,255,0.07)'
+                  : 'rgba(255,255,255,0.02)',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '10px',
+                letterSpacing: '0.08em',
+                color: doubtTooltip ? 'var(--text-secondary)' : 'var(--text-tertiary)',
+                cursor: 'default',
+                userSelect: 'none',
+                transform: doubtTooltip ? 'scale(1.05)' : 'scale(1)',
+                transition: 'all 0.22s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                animation: doubtTooltip ? 'none' : 'doubtBreathe 3.5s ease-in-out infinite',
+              }}>
+                <span style={{
+                  opacity: doubtTooltip ? 1 : 0.7,
+                  transition: 'opacity 0.2s',
+                }}>?</span>
+                {' '}Doubt
+              </div>
+              {doubtTooltip && (
+                <div style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 8px)',
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  whiteSpace: 'nowrap',
+                  background: 'var(--ink-3)',
+                  border: '1px solid var(--border)',
+                  borderRadius: '8px',
+                  padding: '6px 10px',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '10px',
+                  color: 'var(--text-secondary)',
+                  zIndex: 100,
+                  pointerEvents: 'none',
+                  animation: 'fadeIn 0.15s ease',
+                }}>
+                  Select any text to understand instantly
+                </div>
+              )}
             </div>
 
-            {/* Reading time badge (mobile only — desktop shows in sidebar) */}
+            {/* Active pill (mobile only — desktop shows in sidebar) */}
             {!isDesktopLayout && (
               <div
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',
-                  gap: '0.4rem',
+                  gap: '0.38rem',
                   fontFamily: 'var(--font-mono)',
                   fontSize: '10px',
                   letterSpacing: '0.1em',
-                  color: 'var(--text-tertiary)',
-                  background: 'rgba(255,255,255,0.03)',
-                  border: '1px solid var(--border)',
-                  padding: '4px 12px',
+                  color: 'rgba(134,239,172,0.85)',
+                  background: 'rgba(34,197,94,0.07)',
+                  border: '1px solid rgba(34,197,94,0.22)',
+                  padding: '4px 10px',
                   borderRadius: '100px',
+                  animation: 'activePillGlow 3.5s ease-in-out infinite',
                 }}
               >
-                {readingTime} min read
+                <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#22c55e', display: 'inline-block', flexShrink: 0, boxShadow: '0 0 4px rgba(34,197,94,0.6)' }} />
+                Active
               </div>
             )}
+          </div>{/* /left pills */}
 
-            {/* Wikipedia source badge */}
-            {article.wiki_url && (
-              <a
-                href={article.wiki_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.4rem',
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: '10px',
-                  letterSpacing: '0.1em',
-                  textTransform: 'uppercase',
-                  color: 'var(--text-secondary)',
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid var(--border)',
-                  padding: '4px 12px 4px 10px',
-                  borderRadius: '100px',
-                  textDecoration: 'none',
-                  transition: 'border-color 0.2s',
-                }}
-                onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--border-gold)' }}
-                onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)' }}
-              >
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm0 2c4.418 0 8 3.582 8 8s-3.582 8-8 8-8-3.582-8-8 3.582-8 8-8zm-1 3v2H9v2h2v6h2V9h2V7h-2V5h-2z" />
-                </svg>
-                Wikipedia source
-              </a>
+          {/* Share article button — top right */}
+          <button
+            onClick={async () => {
+              const url = window.location.href
+              const shareText = `${article.title} — ${url}`
+              if (navigator.share) {
+                await navigator.share({ title: article.title, url }).catch(() => null)
+              } else {
+                await navigator.clipboard.writeText(url).catch(() => null)
+                setArticleCopied(true)
+                setTimeout(() => setArticleCopied(false), 2000)
+              }
+            }}
+            title="Share article"
+            style={{
+              flexShrink: 0,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.35rem',
+              padding: '5px 12px',
+              border: '1px solid var(--border)',
+              borderRadius: '100px',
+              background: articleCopied ? 'rgba(34,197,94,0.08)' : 'transparent',
+              borderColor: articleCopied ? 'rgba(34,197,94,0.4)' : 'var(--border)',
+              color: articleCopied ? '#22c55e' : 'var(--text-tertiary)',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '10px',
+              letterSpacing: '0.06em',
+              cursor: 'pointer',
+              transition: 'all 0.15s',
+            }}
+            onMouseEnter={e => {
+              if (!articleCopied) {
+                e.currentTarget.style.borderColor = 'var(--border-gold)'
+                e.currentTarget.style.color = 'var(--gold)'
+              }
+            }}
+            onMouseLeave={e => {
+              if (!articleCopied) {
+                e.currentTarget.style.borderColor = 'var(--border)'
+                e.currentTarget.style.color = 'var(--text-tertiary)'
+              }
+            }}
+          >
+            {articleCopied ? (
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            ) : (
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13" />
+              </svg>
             )}
-          </div>
-
-          {/* Study Together ──────────────────────────────────────────────── */}
-          <StudyTogetherButton
-            articleSlug={article.slug}
-            articleTitle={article.title}
-            isLoggedIn={isLoggedIn}
-          />
+            {articleCopied ? 'Copied!' : 'Share'}
+          </button>
+          </div>{/* /badges row */}
 
           {/* Article title */}
           <h1
@@ -816,12 +981,80 @@ export default function ArticleView({ article }: { article: Article }) {
           )}
 
           {/* Article body */}
-          <div
-            ref={articleContentRef}
-            className="article-prose"
-            style={{ margin: 0, padding: 0 }}
-            dangerouslySetInnerHTML={{ __html: contentWithAnchors }}
-          />
+          {isDesktopLayout ? (
+            <div
+              className="article-prose"
+              style={{ margin: 0, padding: 0 }}
+              dangerouslySetInnerHTML={{ __html: contentWithAnchors }}
+            />
+          ) : (
+            /* Mobile: accordion sections */
+            <div style={{ margin: 0, padding: 0 }}>
+              {articleSections.length > 0 ? (
+                articleSections.map(sec => (
+                  <div key={sec.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                    <button
+                      onClick={() => setOpenSectionId(prev => prev === sec.id ? '' : sec.id)}
+                      style={{
+                        width: '100%',
+                        textAlign: 'left',
+                        border: 'none',
+                        background: 'transparent',
+                        padding: '0.875rem 0',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '0.75rem',
+                        cursor: 'pointer',
+                        fontFamily: 'var(--font-sans)',
+                        fontSize: '17px',
+                        fontWeight: 600,
+                        color: openSectionId === sec.id ? 'var(--gold)' : 'var(--text-primary)',
+                        letterSpacing: '-0.01em',
+                        transition: 'color 0.18s',
+                      }}
+                    >
+                      <span>{sec.heading}</span>
+                      <svg
+                        width="14" height="14" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                        style={{
+                          flexShrink: 0,
+                          transition: 'transform 0.25s',
+                          transform: openSectionId === sec.id ? 'rotate(180deg)' : 'rotate(0deg)',
+                          color: 'var(--text-tertiary)',
+                        }}
+                      >
+                        <polyline points="6 9 12 15 18 9" />
+                      </svg>
+                    </button>
+                    <div
+                      style={{
+                        overflow: openSectionId === sec.id ? 'visible' : 'hidden',
+                        maxHeight: openSectionId === sec.id ? '9999px' : '0px',
+                        transition: openSectionId === sec.id
+                          ? 'max-height 0.4s cubic-bezier(0, 1, 0, 1)'
+                          : 'max-height 0.3s cubic-bezier(1, 0, 1, 0)',
+                      }}
+                    >
+                      <div
+                        className="article-prose"
+                        style={{ paddingBottom: '1rem' }}
+                        dangerouslySetInnerHTML={{ __html: sec.contentHtml }}
+                      />
+                    </div>
+                  </div>
+                ))
+              ) : (
+                /* Fallback: render full content if sections couldn't be parsed */
+                <div
+                  className="article-prose"
+                  onContextMenu={e => e.preventDefault()}
+                  dangerouslySetInnerHTML={{ __html: contentWithAnchors }}
+                />
+              )}
+            </div>
+          )}
 
           {/* Sources */}
           {article.sources?.length > 0 && (
@@ -896,6 +1129,7 @@ export default function ArticleView({ article }: { article: Article }) {
                 background: 'var(--surface)',
                 borderRadius: '16px',
                 border: '1px solid var(--border)',
+                minHeight: newsLoading ? '120px' : undefined,
               }}
             >
               <p
@@ -928,7 +1162,7 @@ export default function ArticleView({ article }: { article: Article }) {
                 </div>
               ) : (
                 <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '0' }}>
-                  {news.map((item, i) => {
+                  {news.slice(0, 5).map((item, i, arr) => {
                     const age = Math.round((Date.now() - new Date(item.publishedAt).getTime()) / 3_600_000)
                     const ageLabel =
                       age < 1 ? 'just now' : age < 24 ? `${age}h ago` : `${Math.round(age / 24)}d ago`
@@ -936,7 +1170,7 @@ export default function ArticleView({ article }: { article: Article }) {
                       <li
                         key={i}
                         style={{
-                          borderBottom: i < news.length - 1 ? '1px solid var(--border)' : 'none',
+                          borderBottom: i < arr.length - 1 ? '1px solid var(--border)' : 'none',
                           padding: '0.75rem 0',
                         }}
                       >
