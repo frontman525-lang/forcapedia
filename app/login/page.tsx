@@ -18,6 +18,10 @@ function mapError(msg: string, mode: 'signin' | 'signup') {
   return msg
 }
 
+function isSupabaseHookTimeout(msg: string) {
+  return msg.toLowerCase().includes('failed to reach hook within maximum time')
+}
+
 function EyeOpen() {
   return (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -312,6 +316,7 @@ function LoginContent() {
   const [confirm, setConfirm]   = useState('')
   const [showPass, setShowPass] = useState(false)
   const [loading, setLoading]   = useState(false)
+  const [slowSend, setSlowSend] = useState(false)
   const [error, setError]       = useState<string | null>(null)
 
   useEffect(() => {
@@ -378,12 +383,23 @@ function LoginContent() {
     e.preventDefault()
     const em = email.trim().toLowerCase()
     if (!em) { setError('Enter your email address.'); return }
-    setLoading(true); setError(null)
+    setLoading(true); setSlowSend(false); setError(null)
+    const slowTimer = setTimeout(() => setSlowSend(true), 1400)
     const { error } = await supabase.auth.resetPasswordForEmail(em, {
       redirectTo: `${window.location.origin}/auth/callback?next=/auth/update-password`,
     })
+    clearTimeout(slowTimer)
     setLoading(false)
-    if (error) { setError(error.message); return }
+    setSlowSend(false)
+    if (error) {
+      // Supabase can timeout waiting for hook response even when email is eventually sent.
+      if (isSupabaseHookTimeout(error.message || '')) {
+        setScreen('sent')
+        return
+      }
+      setError(error.message)
+      return
+    }
     setScreen('sent')
   }
 
@@ -570,7 +586,7 @@ function LoginContent() {
                   onChange={e => setEmail(e.target.value)} autoComplete="email" disabled={loading} autoFocus />
                 {error && <div className="err">{error}</div>}
                 <button className="btn-cta" type="submit" disabled={loading || !email.trim()}>
-                  {loading ? 'Sending…' : 'Send reset link'}
+                  {loading ? (slowSend ? 'Still sending…' : 'Sending…') : 'Send reset link'}
                 </button>
                 <button className="btn-dark" type="button" onClick={() => go('login-password')}>Go back</button>
               </form>

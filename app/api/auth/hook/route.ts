@@ -106,8 +106,13 @@ export async function POST(req: Request) {
   }
 
   // Build the action URL that Supabase will verify when clicked.
-  // /auth/v1/verify requires the anon key as ?apikey= query param.
-  const verifyBase = `${email_data.site_url}/auth/v1/verify`
+  // Payload site_url can be either:
+  // - https://<project>.supabase.co
+  // - https://<project>.supabase.co/auth/v1
+  // Normalize it to avoid duplicated "/auth/v1/auth/v1/verify".
+  const rawSiteUrl = (email_data.site_url || process.env.NEXT_PUBLIC_SUPABASE_URL || '').replace(/\/+$/, '')
+  const authBase = rawSiteUrl.endsWith('/auth/v1') ? rawSiteUrl : `${rawSiteUrl}/auth/v1`
+  const verifyBase = `${authBase}/verify`
   const type = email_action_type === 'signup'   ? 'signup'
              : email_action_type === 'recovery' ? 'recovery'
              : email_action_type               // email_change_new / email_change_current
