@@ -68,7 +68,7 @@ export async function POST(req: Request) {
     amount:          payment?.payment_amount,
     currency:        payment?.payment_currency,
     raw_payload:     event,
-  }).then().catch(console.error)
+  }).catch(console.error)
 
   // ── Helper — get user email + name ────────────────────────────────────────
   async function getUserInfo() {
