@@ -22,6 +22,7 @@ import { NextResponse } from 'next/server'
 import { createElement }    from 'react'
 import { render }           from '@react-email/render'
 import { resend }           from '@/lib/email/client'
+import { sendViaZeptoMail } from '@/lib/email/send'
 import { ConfirmEmail }     from '@/lib/email/templates/ConfirmEmail'
 import { ResetPasswordEmail } from '@/lib/email/templates/ResetPasswordEmail'
 
@@ -85,6 +86,7 @@ export async function POST(req: Request) {
   const rawBody = await req.text()
 
   if (!(await verifyToken(req, rawBody))) {
+    console.error('[auth/hook] signature verification failed')
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
@@ -98,6 +100,10 @@ export async function POST(req: Request) {
   const { user, email_data } = payload
   const { email_action_type, token_hash, redirect_to } = email_data
   const userEmail = user.email
+
+  if (!userEmail) {
+    return NextResponse.json({ error: 'Missing user email' }, { status: 400 })
+  }
 
   // Build the action URL that Supabase will verify when clicked.
   // /auth/v1/verify requires the anon key as ?apikey= query param.
@@ -136,9 +142,16 @@ export async function POST(req: Request) {
 
   try {
     await resend.emails.send({ from: FROM, to: [userEmail], subject, html, text })
-    return NextResponse.json({ success: true })
-  } catch (err) {
-    console.error('[auth/hook] Resend error:', err)
+    return NextResponse.json({ success: true, provider: 'resend' })
+  } catch (resendErr) {
+    console.warn('[auth/hook] Resend failed, trying ZeptoMail fallback:', resendErr)
+  }
+
+  try {
+    await sendViaZeptoMail({ to: userEmail, subject, html, text })
+    return NextResponse.json({ success: true, provider: 'zepto' })
+  } catch (zeptoErr) {
+    console.error('[auth/hook] ZeptoMail fallback failed:', zeptoErr)
     return NextResponse.json({ error: 'Email send failed' }, { status: 500 })
   }
 }
