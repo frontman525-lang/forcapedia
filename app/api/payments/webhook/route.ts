@@ -68,7 +68,7 @@ export async function POST(req: Request) {
     amount:          payment?.payment_amount,
     currency:        payment?.payment_currency,
     raw_payload:     event,
-  }).catch(console.error)
+  }).then(({ error }) => { if (error) console.error('[webhook] audit log:', error) })
 
   // ── Helper — get user email + name ────────────────────────────────────────
   async function getUserInfo() {
