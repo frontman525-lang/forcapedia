@@ -68,10 +68,6 @@ async function verifyToken(req: Request, rawBody: string): Promise<boolean> {
   const b64Key  = SECRET.replace(/^v1,whsec_/, '')
   const keyNums = Array.from(atob(b64Key), c => c.charCodeAt(0))
 
-  // DEBUG
-  console.log('[hook] secret starts with v1,whsec_:', SECRET.startsWith('v1,whsec_'))
-  console.log('[hook] b64Key length:', b64Key.length, '| keyNums length:', keyNums.length)
-
   const key = await crypto.subtle.importKey(
     'raw', new Uint8Array(keyNums),
     { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
@@ -79,9 +75,6 @@ async function verifyToken(req: Request, rawBody: string): Promise<boolean> {
 
   const sigBuf  = await crypto.subtle.sign('HMAC', key, encoder.encode(signed))
   const computed = btoa(String.fromCharCode(...new Uint8Array(sigBuf)))
-
-  console.log('[hook] computed(12):', computed.substring(0, 12))
-  console.log('[hook] received(12):', sigHeader.split(' ')[0]?.replace('v1,', '').substring(0, 12))
 
   // Header may list multiple sigs: "v1,abc v1,def"
   return sigHeader.split(' ').some(s => s === `v1,${computed}`)
@@ -106,14 +99,16 @@ export async function POST(req: Request) {
   const { email_action_type, token_hash, redirect_to } = email_data
   const userEmail = user.email
 
-  // Build the action URL that Supabase will verify when clicked
+  // Build the action URL that Supabase will verify when clicked.
+  // /auth/v1/verify requires the anon key as ?apikey= query param.
   const verifyBase = `${email_data.site_url}/auth/v1/verify`
   const type = email_action_type === 'signup'   ? 'signup'
              : email_action_type === 'recovery' ? 'recovery'
              : email_action_type               // email_change_new / email_change_current
 
   const actionUrl =
-    `${verifyBase}?token_hash=${encodeURIComponent(token_hash)}` +
+    `${verifyBase}?apikey=${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ''}` +
+    `&token_hash=${encodeURIComponent(token_hash)}` +
     `&type=${encodeURIComponent(type)}` +
     `&redirect_to=${encodeURIComponent(redirect_to || SITE)}`
 
