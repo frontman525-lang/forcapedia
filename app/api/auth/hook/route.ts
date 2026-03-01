@@ -98,7 +98,7 @@ export async function POST(req: Request) {
   }
 
   const { user, email_data } = payload
-  const { email_action_type, token_hash, redirect_to } = email_data
+  const { email_action_type, token_hash, token, redirect_to } = email_data
   const userEmail = user.email
 
   if (!userEmail) {
@@ -117,11 +117,25 @@ export async function POST(req: Request) {
              : email_action_type === 'recovery' ? 'recovery'
              : email_action_type               // email_change_new / email_change_current
 
-  const actionUrl =
-    `${verifyBase}?apikey=${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? ''}` +
-    `&token_hash=${encodeURIComponent(token_hash)}` +
-    `&type=${encodeURIComponent(type)}` +
-    `&redirect_to=${encodeURIComponent(redirect_to || SITE)}`
+  const queryParts = [
+    `apikey=${encodeURIComponent(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '')}`,
+    `type=${encodeURIComponent(type)}`,
+    `redirect_to=${encodeURIComponent(redirect_to || SITE)}`,
+  ]
+
+  if (token_hash) {
+    queryParts.push(`token_hash=${encodeURIComponent(token_hash)}`)
+  } else if (token) {
+    queryParts.push(`token=${encodeURIComponent(token)}`)
+  } else {
+    console.error('[auth/hook] Missing both token_hash and token in payload', {
+      email_action_type,
+      hasSiteUrl: Boolean(email_data.site_url),
+    })
+    return NextResponse.json({ error: 'Invalid payload: missing verification token' }, { status: 400 })
+  }
+
+  const actionUrl = `${verifyBase}?${queryParts.join('&')}`
 
   let subject: string
   let html:    string
