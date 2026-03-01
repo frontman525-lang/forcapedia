@@ -75,9 +75,10 @@ async function verifyToken(req: Request, rawBody: string): Promise<boolean> {
 export async function POST(req: Request) {
   const rawBody = await req.text()
 
-  // DEBUG — remove after confirming auth works
-  const authHeader = req.headers.get('authorization') ?? '(none)'
-  console.log('[hook] authorization header:', authHeader.substring(0, 40))
+  // DEBUG — log all headers to find what Supabase actually sends
+  const allHeaders: Record<string, string> = {}
+  req.headers.forEach((val, key) => { allHeaders[key] = key.toLowerCase().includes('auth') ? val.substring(0, 40) : val })
+  console.log('[hook] headers:', JSON.stringify(allHeaders))
   console.log('[hook] SECRET set:', !!SECRET, '| body length:', rawBody.length)
 
   if (!(await verifyToken(req, rawBody))) {
