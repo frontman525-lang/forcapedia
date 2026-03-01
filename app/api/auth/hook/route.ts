@@ -129,13 +129,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Invalid payload: missing verification token' }, { status: 400 })
   }
 
-  const tokenQuery = tokenHash
-    ? `token_hash=${encodeURIComponent(tokenHash)}`
-    : `token=${encodeURIComponent(plainToken)}`
+  const tokenParams: string[] = []
+  if (plainToken) tokenParams.push(`token=${encodeURIComponent(plainToken)}`)
+  if (tokenHash) tokenParams.push(`token_hash=${encodeURIComponent(tokenHash)}`)
 
   const actionUrl =
     `${verifyBase}?apikey=${encodeURIComponent(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '')}` +
-    `&${tokenQuery}` +
+    `&${tokenParams.join('&')}` +
     `&type=${encodeURIComponent(type)}` +
     `&redirect_to=${encodeURIComponent(redirect_to || SITE)}`
 
