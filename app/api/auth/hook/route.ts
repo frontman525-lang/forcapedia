@@ -63,25 +63,28 @@ async function verifyToken(req: Request, rawBody: string): Promise<boolean> {
   const signed  = `${msgId}.${timestamp}.${rawBody}`
   const encoder = new TextEncoder()
 
-  // Try both key formats: raw UTF-8 bytes and base64-decoded bytes.
-  // Supabase/Svix may use either depending on how the secret was entered.
-  const keyOptions: number[][] = [
-    Array.from(encoder.encode(SECRET)),   // raw bytes (secret used as-is)
-  ]
-  try {
-    keyOptions.push(Array.from(atob(SECRET), c => c.charCodeAt(0))) // base64-decoded
-  } catch { /* not valid base64 — skip */ }
+  // Secret format from Supabase dashboard: "v1,whsec_<base64-encoded-key>"
+  // Strip the prefix, then base64-decode to get the raw HMAC key bytes.
+  const b64Key  = SECRET.replace(/^v1,whsec_/, '')
+  const keyNums = Array.from(atob(b64Key), c => c.charCodeAt(0))
 
-  for (const nums of keyOptions) {
-    const key = await crypto.subtle.importKey(
-      'raw', new Uint8Array(nums),
-      { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
-    )
-    const sigBuf  = await crypto.subtle.sign('HMAC', key, encoder.encode(signed))
-    const computed = btoa(String.fromCharCode(...new Uint8Array(sigBuf)))
-    if (sigHeader.split(' ').some(s => s === `v1,${computed}`)) return true
-  }
-  return false
+  // DEBUG
+  console.log('[hook] secret starts with v1,whsec_:', SECRET.startsWith('v1,whsec_'))
+  console.log('[hook] b64Key length:', b64Key.length, '| keyNums length:', keyNums.length)
+
+  const key = await crypto.subtle.importKey(
+    'raw', new Uint8Array(keyNums),
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
+  )
+
+  const sigBuf  = await crypto.subtle.sign('HMAC', key, encoder.encode(signed))
+  const computed = btoa(String.fromCharCode(...new Uint8Array(sigBuf)))
+
+  console.log('[hook] computed(12):', computed.substring(0, 12))
+  console.log('[hook] received(12):', sigHeader.split(' ')[0]?.replace('v1,', '').substring(0, 12))
+
+  // Header may list multiple sigs: "v1,abc v1,def"
+  return sigHeader.split(' ').some(s => s === `v1,${computed}`)
 }
 
 // ── Route handler ──────────────────────────────────────────────────────────────
