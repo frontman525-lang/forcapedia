@@ -206,7 +206,7 @@ export default function StudyRoom({
   // ── Member scroll → disable follow ────────────────────────────────────────
   useEffect(() => {
     if (currentUser.isHost) return
-    let timeout: ReturnType<typeof setTimeout>
+    let timeout: ReturnType<typeof setTimeout> | undefined
     const onScroll = () => {
       setIsFollowing(false)
       clearTimeout(timeout)

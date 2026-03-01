@@ -18,7 +18,8 @@
       "Bash(wc -l /c/Users/shaik/Desktop/forcapedia/components/*.tsx)",
       "Bash(cmd /c \"rmdir /s /q C:\\\\Users\\\\shaik\\\\Desktop\\\\forcapedia\\\\.next\")",
       "Bash(ls \"c:\\\\Users\\\\shaik\\\\Desktop\\\\forcapedia\\\\app\\\\api\\\\trending\"\" 2>/dev/null || echo \"NOT FOUND \")",
-      "Bash(npm uninstall @aws-sdk/client-ses)"
+      "Bash(npm uninstall @aws-sdk/client-ses)",
+      "Bash(ls -la \"c:\\\\Users\\\\shaik\\\\Desktop\\\\forcapedia\\\\app\\\\api\\\\rooms\"\" 2>/dev/null || echo \"rooms dir not found \")"
     ]
   }
 }
