@@ -62,8 +62,18 @@ async function verifyToken(req: Request, rawBody: string): Promise<boolean> {
 
   const signed  = `${msgId}.${timestamp}.${rawBody}`
   const encoder = new TextEncoder()
+
+  // Svix base64-decodes the secret before using it as the HMAC key.
+  // Build from number[] so TypeScript infers Uint8Array<ArrayBuffer> (not ArrayBufferLike).
+  let secretNums: number[]
+  try {
+    secretNums = Array.from(atob(SECRET), c => c.charCodeAt(0))
+  } catch {
+    secretNums = Array.from(encoder.encode(SECRET))
+  }
+
   const key = await crypto.subtle.importKey(
-    'raw', encoder.encode(SECRET),
+    'raw', new Uint8Array(secretNums),
     { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],
   )
 
