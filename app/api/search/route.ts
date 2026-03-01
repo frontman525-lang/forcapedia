@@ -3,6 +3,9 @@ import { createClient } from '@/lib/supabase/server'
 import { generateArticle } from '@/lib/ai'
 import { normalizeQuery } from '@/lib/normalizeQuery'
 import { getWikiArticle } from '@/lib/wikipedia'
+import { sendEmail } from '@/lib/email/send'
+import { WelcomeEmail } from '@/lib/email/templates/WelcomeEmail'
+import * as React from 'react'
 
 // ── Slug helper ────────────────────────────────────────────────────
 function toSlug(str: string): string {
@@ -93,7 +96,17 @@ export async function POST(request: Request) {
 
   const tier       = usage?.tier ?? 'free'
   const tokensUsed = usage?.tokens_used ?? 0
-  const tokenLimit = tier === 'free' ? 40_000 : tier === 'tier1' ? 2_000_000 : 4_000_000
+  const tokenLimit = tier === 'free' ? 50_000 : tier === 'tier1' ? 2_000_000 : 4_000_000
+
+  // ── Welcome email — fire on first-ever search (no usage row yet) ──
+  if (!usage && user.email) {
+    const firstName = (user.user_metadata?.full_name as string | undefined)?.split(' ')[0] ?? 'there'
+    sendEmail({
+      to:       user.email,
+      subject:  `Welcome to Forcapedia, ${firstName}`,
+      template: React.createElement(WelcomeEmail, { firstName }),
+    }).catch(err => console.error('[email] welcome send failed:', err))
+  }
 
   console.log(`[search] 💰 TOKEN BUDGET  used: ${tokensUsed} / ${tokenLimit}  (tier: ${tier})`)
 

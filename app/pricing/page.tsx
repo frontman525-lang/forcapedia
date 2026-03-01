@@ -21,7 +21,7 @@ export default async function PricingPage({ searchParams }: Props) {
     const { data: usage } = await supabase
       .from('user_usage')
       .select('tier')
-      .eq('id', user.id)
+      .eq('user_id', user.id)
       .single()
     currentTier = usage?.tier ?? 'free'
   }

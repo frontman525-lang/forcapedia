@@ -319,12 +319,30 @@ export default function LoginModal({ pendingQuery, onClose }: LoginModalProps) {
                 fontFamily: 'var(--font-sans)',
                 fontSize: '14px',
                 fontWeight: 300,
-                marginBottom: '0.65rem',
+                marginBottom: authMode === 'signin' ? '0.25rem' : '0.65rem',
                 outline: 'none',
               }}
               onFocus={e => { e.currentTarget.style.borderColor = 'var(--border-gold)' }}
               onBlur={e => { e.currentTarget.style.borderColor = 'var(--border)' }}
             />
+            {authMode === 'signin' && (
+              <div style={{ textAlign: 'right', marginBottom: '0.65rem' }}>
+                <a
+                  href="/login?screen=forgot"
+                  style={{
+                    fontSize: '11.5px',
+                    color: 'rgba(201,169,110,0.6)',
+                    textDecoration: 'none',
+                    fontFamily: 'var(--font-sans)',
+                    transition: 'color 0.2s',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.color = 'var(--gold)' }}
+                  onMouseLeave={e => { e.currentTarget.style.color = 'rgba(201,169,110,0.6)' }}
+                >
+                  Forgot password?
+                </a>
+              </div>
+            )}
             <button
               type="submit"
               disabled={emailLoading || !email.trim() || !password}

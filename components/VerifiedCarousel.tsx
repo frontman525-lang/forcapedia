@@ -54,6 +54,8 @@ export default function VerifiedCarousel() {
   const [prev, setPrev] = useState<number | null>(null)
   const [animating, setAnimating] = useState(false)
   const [hovering, setHovering] = useState(false)
+  // mounted controls text visibility — prevents the SSR→shuffle snap on refresh
+  const [mounted, setMounted] = useState(false)
   const total = topics.length
 
   const advance = useCallback(() => {
@@ -69,8 +71,11 @@ export default function VerifiedCarousel() {
   }, [animating, active, total])
 
   // Shuffle once on the client after hydration (avoids SSR mismatch)
+  // mounted=true fires after shuffle so the first visible frame is already correct
   useEffect(() => {
     setTopics(shuffle(TOPICS))
+    // rAF ensures the browser has painted the shuffled state before we reveal text
+    requestAnimationFrame(() => setMounted(true))
   }, [])
 
   // Auto-advance every 4s, pauses on hover
@@ -96,7 +101,7 @@ export default function VerifiedCarousel() {
   }
 
   return (
-    <div style={{ position: 'relative', width: 'min(440px, calc(100vw - 3rem))' }}>
+    <div style={{ position: 'relative', width: 'min(440px, calc(100vw - 3rem))', paddingBottom: '12px', overflow: 'visible' }}>
 
       {/* Ghost cards — stacked depth */}
       <div style={{
@@ -141,30 +146,75 @@ export default function VerifiedCarousel() {
           transition: 'transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease',
         }}
       >
-        {/* Exiting row — slides up and fades out */}
-        {prev !== null && (
+        {/* Shimmer skeleton — visible until client shuffle settles */}
+        <div style={{
+          position: 'absolute', inset: 0,
+          display: 'flex', alignItems: 'center',
+          gap: '0.875rem', padding: '0 1rem',
+          opacity: mounted ? 0 : 1,
+          transition: 'opacity 0.38s ease',
+          pointerEvents: 'none',
+        }}>
+          <div style={{
+            width: '6px', height: '6px', borderRadius: '50%',
+            background: 'rgba(201,169,110,0.20)', flexShrink: 0,
+          }} />
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '5px' }}>
+            <div style={{
+              height: '7px', width: '38%', borderRadius: '4px',
+              background: 'linear-gradient(90deg, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.18) 50%, rgba(255,255,255,0.06) 100%)',
+              backgroundSize: '200% 100%',
+              animation: 'cardShimmer 1.6s linear infinite',
+            }} />
+            <div style={{
+              height: '10px', width: '65%', borderRadius: '4px',
+              background: 'linear-gradient(90deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.22) 50%, rgba(255,255,255,0.08) 100%)',
+              backgroundSize: '200% 100%',
+              animation: 'cardShimmer 1.6s linear infinite',
+              animationDelay: '0.18s',
+            }} />
+          </div>
+          <div style={{ width: '13px', height: '13px', borderRadius: '4px', background: 'rgba(255,255,255,0.06)', flexShrink: 0 }} />
+        </div>
+
+        {/* Content visibility gate — fades in after SSR shuffle settles */}
+        <div style={{
+          position: 'absolute', inset: 0,
+          opacity: mounted ? 1 : 0,
+          transition: 'opacity 0.38s ease',
+        }}>
+          {/* Exiting row — slides up and fades out */}
+          {prev !== null && (
+            <div
+              style={{
+                ...rowStyle,
+                animation: `cardExitUp ${ANIM_MS}ms ease forwards`,
+              }}
+            >
+              <CardInner topic={topics[prev]} hovering={false} />
+            </div>
+          )}
+
+          {/* Entering row — rises from below */}
           <div
             style={{
               ...rowStyle,
-              animation: `cardExitUp ${ANIM_MS}ms ease forwards`,
+              animation: animating
+                ? `cardEnterFromBelow ${ANIM_MS}ms ease forwards`
+                : 'none',
             }}
           >
-            <CardInner topic={topics[prev]} hovering={false} />
+            <CardInner topic={topics[active]} hovering={hovering} />
           </div>
-        )}
-
-        {/* Entering row — rises from below */}
-        <div
-          style={{
-            ...rowStyle,
-            animation: animating
-              ? `cardEnterFromBelow ${ANIM_MS}ms ease forwards`
-              : 'none',
-          }}
-        >
-          <CardInner topic={topics[active]} hovering={hovering} />
         </div>
       </div>
+
+      <style>{`
+        @keyframes cardShimmer {
+          0%   { background-position: 200% 0; }
+          100% { background-position: -200% 0; }
+        }
+      `}</style>
     </div>
   )
 }

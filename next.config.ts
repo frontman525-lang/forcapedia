@@ -1,7 +1,14 @@
-import type { NextConfig } from "next";
+import type { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
-  /* config options here */
-};
+  // These packages are server-only. Never bundle them into client code.
+  // Without this, Turbopack analyzes their full import graph even for
+  // server components, which adds seconds to every compilation.
+  serverExternalPackages: [
+    '@aws-sdk/client-ses',
+    '@react-email/components',
+    '@react-email/render',
+  ],
+}
 
-export default nextConfig;
+export default nextConfig

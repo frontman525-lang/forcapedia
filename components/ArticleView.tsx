@@ -2,9 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { useAlert } from './Alert'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import type { NewsItem } from '@/app/api/news/route'
+import type { NewsItem } from '@/types/news'
+import ExplainPanel from './ExplainPanel'
+import HelpfulButton from './HelpfulButton'
 
 interface Article {
   id: string
@@ -91,21 +93,166 @@ function calcReadingTime(html: string): number {
   return Math.max(1, Math.ceil(words / 200))
 }
 
+// ── Study Together Button ──────────────────────────────────────────────────────
+function StudyTogetherButton({
+  articleSlug, articleTitle, isLoggedIn,
+}: { articleSlug: string; articleTitle: string; isLoggedIn: boolean }) {
+  const router = useRouter()
+  const supabase = createClient()
+  const [tier, setTier]         = useState<string | null>(null)
+  const [creating, setCreating] = useState(false)
+  const [readers, setReaders]   = useState(0)
+  const [copied, setCopied]     = useState(false)
+  const [roomLink, setRoomLink] = useState<string | null>(null)
+  const [roomCode, setRoomCode] = useState<string | null>(null)
+
+  // Load tier
+  useEffect(() => {
+    if (!isLoggedIn) return
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return
+      supabase.from('user_usage').select('tier').eq('user_id', user.id).single()
+        .then(({ data }) => setTier(data?.tier ?? 'free'))
+    })
+  }, [isLoggedIn]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Live reader presence
+  useEffect(() => {
+    const channel = supabase.channel(`article-readers:${articleSlug}`, {
+      config: { presence: { key: `reader-${Math.random()}` } },
+    })
+    channel.on('presence', { event: 'sync' }, () => {
+      setReaders(Object.keys(channel.presenceState()).length)
+    }).subscribe(async status => {
+      if (status === 'SUBSCRIBED') await channel.track({ slug: articleSlug })
+    })
+    return () => { supabase.removeChannel(channel) }
+  }, [articleSlug]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleClick() {
+    if (!isLoggedIn) { router.push(`/login?next=/article/${articleSlug}`); return }
+    if (tier === 'free') {
+      router.push('/pricing')
+      return
+    }
+    setCreating(true)
+    const res = await fetch('/api/rooms/create', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ articleSlug, articleTitle }),
+    })
+    if (res.ok) {
+      const { code } = await res.json()
+      setRoomCode(code)
+      setRoomLink(`${window.location.origin}/room/${code}`)
+    } else {
+      const { error } = await res.json()
+      alert(error || 'Could not create room.')
+    }
+    setCreating(false)
+  }
+
+  if (roomLink) {
+    const wa = `https://wa.me/?text=${encodeURIComponent(`Join my Forcapedia study room → ${roomLink}`)}`
+    return (
+      <div style={{
+        margin: '2rem 0', padding: '1.25rem',
+        background: 'rgba(111,207,151,0.06)', border: '1px solid rgba(111,207,151,0.2)',
+        borderRadius: '16px',
+      }}>
+        <p style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', letterSpacing: '0.1em', textTransform: 'uppercase', color: '#6FCF97', marginBottom: '0.75rem' }}>
+          Room created! Share this link:
+        </p>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <code style={{
+            flex: 1, minWidth: 0, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+            borderRadius: '8px', padding: '0.5rem 0.75rem', fontSize: '13px', color: '#6FCF97',
+            fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
+            {roomLink}
+          </code>
+          <button onClick={() => { navigator.clipboard.writeText(roomLink); setCopied(true); setTimeout(() => setCopied(false), 2000) }} style={{
+            background: 'rgba(111,207,151,0.1)', border: '1px solid rgba(111,207,151,0.2)',
+            borderRadius: '8px', color: '#6FCF97', fontSize: '12px', padding: '0 1rem', cursor: 'pointer', flexShrink: 0,
+          }}>
+            {copied ? '✓ Copied' : 'Copy'}
+          </button>
+          <a href={wa} target="_blank" rel="noopener noreferrer" style={{
+            display: 'flex', alignItems: 'center', gap: '0.3rem',
+            background: 'rgba(37,211,102,0.1)', border: '1px solid rgba(37,211,102,0.2)',
+            borderRadius: '8px', color: '#25D166', fontSize: '12px', padding: '0 1rem', textDecoration: 'none', flexShrink: 0,
+          }}>
+            WhatsApp
+          </a>
+          <button onClick={() => router.push(`/room/${roomCode}`)} style={{
+            background: 'rgba(201,169,110,0.12)', border: '1px solid rgba(201,169,110,0.2)',
+            borderRadius: '8px', color: '#C9A96E', fontSize: '12px', padding: '0 1rem', cursor: 'pointer', flexShrink: 0,
+          }}>
+            Enter room →
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  const isPaid = tier === 'tier1' || tier === 'tier2'
+
+  return (
+    <div style={{ margin: '2rem 0' }}>
+      {/* Live reader count */}
+      {readers > 1 && (
+        <p style={{
+          fontFamily: 'var(--font-mono)', fontSize: '11px', letterSpacing: '0.06em',
+          color: 'rgba(111,207,151,0.7)', marginBottom: '0.75rem',
+          display: 'flex', alignItems: 'center', gap: '0.4rem',
+        }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#6FCF97', display: 'inline-block', animation: 'pulseGold 2s ease-in-out infinite' }} />
+          {readers} students reading this right now
+        </p>
+      )}
+      <button
+        onClick={handleClick}
+        disabled={creating}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: '0.6rem',
+          background: isPaid ? 'rgba(111,207,151,0.08)' : 'rgba(255,255,255,0.03)',
+          border: `1px solid ${isPaid ? 'rgba(111,207,151,0.25)' : 'rgba(255,255,255,0.08)'}`,
+          borderRadius: '12px', padding: '0.75rem 1.25rem', cursor: 'pointer',
+          color: isPaid ? '#6FCF97' : 'rgba(240,237,232,0.5)', fontSize: '14px',
+          fontFamily: 'var(--font-sans)', transition: 'all 0.2s',
+        }}
+        onMouseEnter={e => { if (isPaid) { e.currentTarget.style.background = 'rgba(111,207,151,0.14)'; e.currentTarget.style.borderColor = 'rgba(111,207,151,0.4)' } }}
+        onMouseLeave={e => { e.currentTarget.style.background = isPaid ? 'rgba(111,207,151,0.08)' : 'rgba(255,255,255,0.03)'; e.currentTarget.style.borderColor = isPaid ? 'rgba(111,207,151,0.25)' : 'rgba(255,255,255,0.08)' }}
+      >
+        <span style={{ fontSize: '16px' }}>{!isPaid ? '🔒' : '📖'}</span>
+        <span>{creating ? 'Creating room…' : 'Study Together'}</span>
+        {isPaid && <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', opacity: 0.6 }}>→</span>}
+        {!isPaid && isLoggedIn && (
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: '#C9A96E', marginLeft: '0.25rem' }}>
+            Scholar+
+          </span>
+        )}
+      </button>
+      {!isPaid && isLoggedIn && tier !== null && (
+        <p style={{ marginTop: '0.4rem', fontSize: '12px', color: 'rgba(240,237,232,0.3)' }}>
+          <Link href="/pricing" style={{ color: '#C9A96E' }}>Upgrade to Scholar</Link> to create study rooms
+        </p>
+      )}
+    </div>
+  )
+}
+
 export default function ArticleView({ article }: { article: Article }) {
-  const { showAlert } = useAlert()
   const supabase = createClient()
   const articleContentRef = useRef<HTMLDivElement | null>(null)
   const tocButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({})
 
-  const [followUp, setFollowUp] = useState('')
-  const [followUpResult, setFollowUpResult] = useState('')
-  const [loadingFollowUp, setLoadingFollowUp] = useState(false)
-  const [usedFollowUp, setUsedFollowUp] = useState(false)
   const [news, setNews] = useState<NewsItem[]>([])
   const [newsLoading, setNewsLoading] = useState(true)
   const [activeSectionId, setActiveSectionId] = useState('')
   const [isDesktopLayout, setIsDesktopLayout] = useState(false)
   const [related, setRelated] = useState<RelatedArticle[]>([])
+  const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [readSlugs, setReadSlugs] = useState<Set<string>>(new Set())
 
   const { html: contentWithAnchors, items: tocItems } = useMemo(
     () => buildArticleContentWithToc(article.content),
@@ -128,6 +275,34 @@ export default function ArticleView({ article }: { article: Article }) {
       .catch(() => setNews([]))
       .finally(() => setNewsLoading(false))
   }, [article.title])
+
+  // Record this article as read + fetch user's read history for personalisation
+  useEffect(() => {
+    async function recordAndPersonalise() {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      setIsLoggedIn(true)
+
+      // Fire-and-forget: record the read (upsert updates read_at on revisit)
+      fetch('/api/history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slug: article.slug,
+          title: article.title,
+          category: article.category,
+        }),
+      }).catch(() => null)
+
+      // Fetch read slugs so we can identify unread related articles
+      const { data: history } = await supabase
+        .from('reading_history')
+        .select('article_slug')
+        .eq('user_id', user.id)
+      setReadSlugs(new Set((history ?? []).map((h: { article_slug: string }) => h.article_slug)))
+    }
+    recordAndPersonalise()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch related articles — tag overlap first (topic-smart), category fallback
   useEffect(() => {
@@ -234,40 +409,6 @@ export default function ArticleView({ article }: { article: Article }) {
     if (!target) return
     target.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }, [activeSectionId])
-
-  async function handleFollowUp(e: React.FormEvent) {
-    e.preventDefault()
-    if (!followUp.trim()) return
-
-    const { data } = await supabase.auth.getUser()
-    if (!data.user) {
-      showAlert('Sign in to ask follow-up questions.', 'warning')
-      return
-    }
-
-    if (usedFollowUp) {
-      showAlert('Free plan: 1 follow-up per article. Upgrade for unlimited.', 'warning')
-      return
-    }
-
-    setLoadingFollowUp(true)
-    try {
-      const res = await fetch('/api/followup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: followUp, articleSlug: article.slug }),
-      })
-      if (!res.ok) throw new Error()
-      const { answer } = await res.json()
-      setFollowUpResult(answer)
-      setUsedFollowUp(true)
-      showAlert('Answer generated and verified.', 'success')
-    } catch {
-      showAlert('Failed to get answer. Please try again.', 'error')
-    } finally {
-      setLoadingFollowUp(false)
-    }
-  }
 
   function scrollToSection(id: string) {
     const heading = document.getElementById(id)
@@ -495,14 +636,14 @@ export default function ArticleView({ article }: { article: Article }) {
             </div>
           )}
 
-          {/* Badges row */}
+          {/* Badges row — Verified · date | hint | reading time | Wikipedia */}
           <div
             style={{
               display: 'flex',
               flexWrap: 'wrap',
               alignItems: 'center',
               gap: '0.5rem',
-              marginBottom: '1.5rem',
+              marginBottom: '1.75rem',
             }}
           >
             {/* Verified badge — shows event_date or month+year of verified_at */}
@@ -533,6 +674,25 @@ export default function ArticleView({ article }: { article: Article }) {
                 />
               </svg>
               Verified {'\u00B7'} {badgeDate}
+            </div>
+
+            {/* Explain hint — inline beside Verified badge */}
+            <div style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.35rem',
+              padding: '4px 11px 4px 8px',
+              borderRadius: '100px',
+              border: '1px solid var(--border-gold)',
+              background: 'var(--gold-glow)',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '10px',
+              letterSpacing: '0.08em',
+              color: 'var(--text-tertiary)',
+              userSelect: 'none',
+            }}>
+              <span style={{ color: 'var(--gold)', animation: 'pulseGold 2.5s ease-in-out infinite', fontSize: '8px', lineHeight: 1 }}>✦</span>
+              Highlight text — AI explains it
             </div>
 
             {/* Reading time badge (mobile only — desktop shows in sidebar) */}
@@ -588,6 +748,13 @@ export default function ArticleView({ article }: { article: Article }) {
               </a>
             )}
           </div>
+
+          {/* Study Together ──────────────────────────────────────────────── */}
+          <StudyTogetherButton
+            articleSlug={article.slug}
+            articleTitle={article.title}
+            isLoggedIn={isLoggedIn}
+          />
 
           {/* Article title */}
           <h1
@@ -798,227 +965,133 @@ export default function ArticleView({ article }: { article: Article }) {
             </div>
           )}
 
-          {/* Related Articles */}
-          {related.length > 0 && (
-            <div style={{ margin: '2rem 0 0' }}>
-              <p
-                style={{
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: '10px',
-                  letterSpacing: '0.12em',
-                  textTransform: 'uppercase',
-                  color: 'var(--gold)',
-                  marginBottom: '1rem',
-                }}
-              >
-                Related Articles
-              </p>
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
-                  gap: '0.75rem',
-                }}
-              >
-                {related.map(rel => (
-                  <Link
-                    key={rel.slug}
-                    href={`/article/${rel.slug}`}
-                    style={{
-                      display: 'block',
-                      padding: '1rem',
-                      background: 'var(--surface)',
-                      border: '1px solid var(--border)',
-                      borderRadius: '12px',
-                      textDecoration: 'none',
-                      transition: 'border-color 0.2s, background 0.2s',
-                    }}
-                    onMouseEnter={e => {
-                      e.currentTarget.style.borderColor = 'var(--border-gold)'
-                      e.currentTarget.style.background = 'var(--gold-glow)'
-                    }}
-                    onMouseLeave={e => {
-                      e.currentTarget.style.borderColor = 'var(--border)'
-                      e.currentTarget.style.background = 'var(--surface)'
-                    }}
-                  >
-                    <p
-                      style={{
-                        fontFamily: 'var(--font-mono)',
-                        fontSize: '9px',
-                        letterSpacing: '0.1em',
-                        textTransform: 'uppercase',
-                        color: 'var(--gold)',
-                        marginBottom: '0.4rem',
-                      }}
-                    >
-                      {rel.category}
-                    </p>
-                    <p
-                      style={{
-                        fontSize: '14px',
-                        fontWeight: 400,
-                        color: 'var(--text-primary)',
-                        lineHeight: 1.3,
-                        marginBottom: '0.4rem',
-                      }}
-                    >
-                      {rel.title}
-                    </p>
-                    <p
-                      style={{
-                        fontSize: '12px',
-                        color: 'var(--text-tertiary)',
-                        lineHeight: 1.5,
-                        display: '-webkit-box',
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: 'vertical',
-                        overflow: 'hidden',
-                      }}
-                    >
-                      {rel.summary}
-                    </p>
-                  </Link>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* Helpful counter — vote button with live realtime count */}
+          <HelpfulButton articleSlug={article.slug} />
 
-          {/* Follow-up question */}
-          <div style={{ margin: '2rem 0 0', padding: 0 }}>
-            <div
-              style={{
-                background: 'var(--surface)',
-                borderRadius: '16px',
-                border: '1px solid var(--border)',
-                padding: '1.5rem',
-              }}
-            >
-              <p
-                style={{
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: '10px',
-                  letterSpacing: '0.12em',
-                  textTransform: 'uppercase',
-                  color: 'var(--gold)',
-                  marginBottom: '1rem',
-                }}
-              >
-                Ask a follow-up{' '}
-                {usedFollowUp && (
-                  <span style={{ color: 'var(--text-tertiary)', marginLeft: '0.5rem' }}>
-                    {'\u00B7'} 1/1 used (free plan)
-                  </span>
-                )}
-              </p>
-
-              {followUpResult && (
-                <div
-                  style={{
-                    marginBottom: '1rem',
-                    padding: '1rem',
-                    background: 'var(--gold-dim)',
-                    border: '1px solid var(--border-gold)',
-                    borderRadius: '10px',
-                    fontSize: '14px',
-                    color: 'var(--text-secondary)',
-                    lineHeight: 1.7,
-                    fontWeight: 300,
-                  }}
-                >
-                  {followUpResult}
-                </div>
-              )}
-
-              <form onSubmit={handleFollowUp} style={{ display: 'flex', gap: '0.75rem' }}>
-                <input
-                  type="text"
-                  value={followUp}
-                  onChange={e => setFollowUp(e.target.value)}
-                  placeholder="Ask anything about this topic\u2026"
-                  disabled={loadingFollowUp || usedFollowUp}
-                  style={{
-                    flex: 1,
-                    background: 'rgba(255,255,255,0.04)',
-                    border: '1px solid var(--border)',
-                    borderRadius: '10px',
-                    padding: '0.7rem 1rem',
-                    color: 'var(--text-primary)',
-                    fontFamily: 'var(--font-sans)',
-                    fontSize: '14px',
-                    fontWeight: 300,
-                    outline: 'none',
-                    transition: 'border-color 0.2s',
-                  }}
-                  onFocus={e => { e.currentTarget.style.borderColor = 'var(--border-gold)' }}
-                  onBlur={e => { e.currentTarget.style.borderColor = 'var(--border)' }}
-                />
-                <button
-                  type="submit"
-                  disabled={!followUp.trim() || loadingFollowUp || usedFollowUp}
-                  style={{
-                    padding: '0.7rem 1.25rem',
-                    borderRadius: '10px',
-                    border: 'none',
-                    background:
-                      !followUp.trim() || loadingFollowUp || usedFollowUp
-                        ? 'rgba(255,255,255,0.04)'
-                        : 'var(--gold)',
-                    color:
-                      !followUp.trim() || loadingFollowUp || usedFollowUp
-                        ? 'var(--text-tertiary)'
-                        : 'var(--ink)',
-                    fontFamily: 'var(--font-sans)',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    cursor:
-                      !followUp.trim() || loadingFollowUp || usedFollowUp ? 'default' : 'pointer',
-                    transition: 'all 0.2s',
-                    flexShrink: 0,
-                  }}
-                >
-                  {loadingFollowUp ? '\u2026' : 'Ask'}
-                </button>
-              </form>
-
-              {usedFollowUp && (
+          {/* Related Articles / Up next for you (personalised for logged-in users) */}
+          {related.length > 0 && (() => {
+            // For logged-in users prefer unread articles; fall back to full list
+            const displayList = isLoggedIn && readSlugs.size > 0
+              ? (related.filter(r => !readSlugs.has(r.slug)).length > 0
+                  ? related.filter(r => !readSlugs.has(r.slug))
+                  : related)
+              : related
+            const sectionLabel = isLoggedIn && readSlugs.size > 0 && related.some(r => !readSlugs.has(r.slug))
+              ? 'Up next for you'
+              : 'Related Articles'
+            return (
+              <div style={{ margin: '2rem 0 0' }}>
                 <p
                   style={{
-                    marginTop: '0.75rem',
-                    fontSize: '12px',
-                    color: 'var(--text-tertiary)',
                     fontFamily: 'var(--font-mono)',
+                    fontSize: '10px',
+                    letterSpacing: '0.12em',
+                    textTransform: 'uppercase',
+                    color: 'var(--gold)',
+                    marginBottom: '1rem',
                   }}
                 >
-                  Upgrade to Tier 1 for unlimited follow-up questions.
+                  {sectionLabel}
                 </p>
-              )}
-            </div>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+                    gap: '0.75rem',
+                  }}
+                >
+                  {displayList.map(rel => (
+                    <Link
+                      key={rel.slug}
+                      href={`/article/${rel.slug}`}
+                      style={{
+                        display: 'block',
+                        padding: '1rem',
+                        background: 'var(--surface)',
+                        border: '1px solid var(--border)',
+                        borderRadius: '12px',
+                        textDecoration: 'none',
+                        transition: 'border-color 0.2s, background 0.2s',
+                      }}
+                      onMouseEnter={e => {
+                        e.currentTarget.style.borderColor = 'var(--border-gold)'
+                        e.currentTarget.style.background = 'var(--gold-glow)'
+                      }}
+                      onMouseLeave={e => {
+                        e.currentTarget.style.borderColor = 'var(--border)'
+                        e.currentTarget.style.background = 'var(--surface)'
+                      }}
+                    >
+                      <p
+                        style={{
+                          fontFamily: 'var(--font-mono)',
+                          fontSize: '9px',
+                          letterSpacing: '0.1em',
+                          textTransform: 'uppercase',
+                          color: 'var(--gold)',
+                          marginBottom: '0.4rem',
+                        }}
+                      >
+                        {rel.category}
+                      </p>
+                      <p
+                        style={{
+                          fontSize: '14px',
+                          fontWeight: 400,
+                          color: 'var(--text-primary)',
+                          lineHeight: 1.3,
+                          marginBottom: '0.4rem',
+                        }}
+                      >
+                        {rel.title}
+                      </p>
+                      <p
+                        style={{
+                          fontSize: '12px',
+                          color: 'var(--text-tertiary)',
+                          lineHeight: 1.5,
+                          display: '-webkit-box',
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: 'vertical',
+                          overflow: 'hidden',
+                        }}
+                      >
+                        {rel.summary}
+                      </p>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+            )
+          })()}
 
-            <div style={{ textAlign: 'center', marginTop: '2.5rem' }}>
-              <Link
-                href="/"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.4rem',
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: '12px',
-                  letterSpacing: '0.1em',
-                  textTransform: 'uppercase',
-                  color: 'var(--text-tertiary)',
-                  textDecoration: 'none',
-                  transition: 'color 0.2s',
-                }}
-                onMouseEnter={e => { e.currentTarget.style.color = 'var(--gold)' }}
-                onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-tertiary)' }}
-              >
-                &larr; Back to search
-              </Link>
-            </div>
+          {/* Back to search */}
+          <div style={{ textAlign: 'center', marginTop: '3rem' }}>
+            <Link
+              href="/"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.4rem',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '12px',
+                letterSpacing: '0.1em',
+                textTransform: 'uppercase',
+                color: 'var(--text-tertiary)',
+                textDecoration: 'none',
+                transition: 'color 0.2s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.color = 'var(--gold)' }}
+              onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-tertiary)' }}
+            >
+              &larr; Back to search
+            </Link>
           </div>
         </div>
       </div>
+
+      {/* Highlight & Explain — floating toolbar + slide-in panel */}
+      <ExplainPanel articleSlug={article.slug} contentRef={articleContentRef} />
     </div>
   )
 }

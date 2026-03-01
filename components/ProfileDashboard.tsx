@@ -1,10 +1,23 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import type { User } from '@supabase/supabase-js'
+
+interface SessionRecord {
+  id: string
+  session_key: string
+  country: string | null
+  city: string | null
+  timezone: string | null
+  browser: string | null
+  os: string | null
+  device_type: string | null
+  last_active: string
+  created_at: string
+}
 
 const TIER_LIMITS: Record<string, number> = {
   free: 50_000,
@@ -18,8 +31,8 @@ const TIER_NAMES: Record<string, string> = {
 }
 const TIER_PRICES: Record<string, string> = {
   free: '$0 / month',
-  tier1: '$6.99 / month',
-  tier2: '$14.99 / month',
+  tier1: '$7.99 / month',
+  tier2: '$17.99 / month',
 }
 
 type Tab = 'account' | 'plan' | 'sessions' | 'data'
@@ -30,15 +43,62 @@ interface Props {
 }
 
 export default function ProfileDashboard({ user, usage }: Props) {
+  // Derive from props before hooks (needed for useState initializers)
+  const fullName = user.user_metadata?.full_name as string | undefined
+  const avatarUrl = user.user_metadata?.avatar_url as string | undefined
+
+  const nickname = user.user_metadata?.nickname as string | undefined
+
   const [tab, setTab] = useState<Tab>('account')
   const [deleteConfirm, setDeleteConfirm] = useState(false)
+  const [imgError, setImgError] = useState(false)
+  const [editingName, setEditingName] = useState(false)
+  const [displayName, setDisplayName] = useState(fullName ?? '')
+  const [nameInput, setNameInput] = useState(fullName ?? '')
+  const [savingName, setSavingName] = useState(false)
+  const [editingNickname, setEditingNickname] = useState(false)
+  const [displayNickname, setDisplayNickname] = useState(nickname ?? '')
+  const [nicknameInput, setNicknameInput] = useState(nickname ?? '')
+  const [savingNickname, setSavingNickname] = useState(false)
+  const [sessions, setSessions] = useState<SessionRecord[]>([])
+  const [sessionsLoading, setSessionsLoading] = useState(false)
+  const [currentSessionKey, setCurrentSessionKey] = useState<string | null>(null)
+  const [deletingSession, setDeletingSession] = useState<string | null>(null)
   const router = useRouter()
   const supabase = createClient()
 
-  const fullName = user.user_metadata?.full_name as string | undefined
-  const avatarUrl = user.user_metadata?.avatar_url as string | undefined
-  const initials = fullName
-    ? fullName.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()
+  // Track this session on mount (fire-and-forget)
+  useEffect(() => {
+    let key = localStorage.getItem('fp-sk')
+    if (!key) {
+      key = crypto.randomUUID()
+      localStorage.setItem('fp-sk', key)
+    }
+    setCurrentSessionKey(key)
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+    fetch('/api/session/track', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_key: key, timezone: tz }),
+      keepalive: true,
+    }).catch(() => {})
+  }, [])
+
+  // Load sessions when the sessions tab is opened
+  useEffect(() => {
+    if (tab !== 'sessions') return
+    setSessionsLoading(true)
+    fetch('/api/session/list')
+      .then(r => r.json())
+      .then(data => {
+        if (Array.isArray(data)) setSessions(data)
+        setSessionsLoading(false)
+      })
+      .catch(() => setSessionsLoading(false))
+  }, [tab])
+
+  const initials = displayName
+    ? displayName.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()
     : (user.email?.[0] ?? '?').toUpperCase()
 
   const tier = usage?.tier ?? 'free'
@@ -57,6 +117,40 @@ export default function ProfileDashboard({ user, usage }: Props) {
   async function handleSignOut() {
     await supabase.auth.signOut()
     router.push('/')
+  }
+
+  async function handleSaveName() {
+    const trimmed = nameInput.trim()
+    if (!trimmed || trimmed === displayName) { setEditingName(false); return }
+    setSavingName(true)
+    const { error } = await supabase.auth.updateUser({ data: { full_name: trimmed } })
+    setSavingName(false)
+    if (!error) {
+      setDisplayName(trimmed)
+      setEditingName(false)
+    }
+  }
+
+  async function handleSaveNickname() {
+    const trimmed = nicknameInput.trim()
+    if (trimmed === displayNickname) { setEditingNickname(false); return }
+    setSavingNickname(true)
+    const { error } = await supabase.auth.updateUser({ data: { nickname: trimmed || null } })
+    setSavingNickname(false)
+    if (!error) {
+      setDisplayNickname(trimmed)
+      setEditingNickname(false)
+    }
+  }
+
+  async function handleDeleteSession(id: string) {
+    setDeletingSession(id)
+    try {
+      await fetch(`/api/session/${id}`, { method: 'DELETE' })
+      setSessions(prev => prev.filter(s => s.id !== id))
+    } finally {
+      setDeletingSession(null)
+    }
   }
 
   const navItems: { key: Tab; label: string; icon: React.ReactNode }[] = [
@@ -85,11 +179,17 @@ export default function ProfileDashboard({ user, usage }: Props) {
               width: '48px', height: '48px', borderRadius: '50%',
               border: '2px solid var(--border-gold)', overflow: 'hidden',
               background: '#2A2D36', marginBottom: '0.75rem',
+              position: 'relative',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
-              {avatarUrl ? (
+              {avatarUrl && !imgError ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={avatarUrl} alt={fullName ?? 'Profile'} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                <img
+                  src={avatarUrl}
+                  alt={displayName || 'Profile'}
+                  onError={() => setImgError(true)}
+                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                />
               ) : (
                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: '14px', fontWeight: 600, color: 'var(--gold)' }}>
                   {initials}
@@ -103,7 +203,7 @@ export default function ProfileDashboard({ user, usage }: Props) {
               color: 'var(--text-primary)',
               lineHeight: 1.2,
             }}>
-              Welcome, {fullName?.split(' ')[0] ?? 'there'}.
+              Welcome, {displayName.split(' ')[0] || 'there'}.
             </p>
             <p style={{ fontSize: '12.5px', color: 'var(--text-tertiary)', fontWeight: 300 }}>
               Manage your Forcapedia account.
@@ -178,7 +278,145 @@ export default function ProfileDashboard({ user, usage }: Props) {
 
               {/* Account card */}
               <Card>
-                <FieldRow label="Full name" value={fullName ?? '—'} />
+                {editingName ? (
+                <div style={{
+                  padding: '0.875rem 0', borderBottom: '1px solid var(--border)',
+                  display: 'flex', flexDirection: 'column', gap: '0.625rem',
+                }}>
+                  <p style={{
+                    fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.06em',
+                    textTransform: 'uppercase', color: 'var(--text-tertiary)',
+                  }}>Full name</p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <input
+                      value={nameInput}
+                      onChange={e => setNameInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') handleSaveName(); if (e.key === 'Escape') { setEditingName(false); setNameInput(displayName) } }}
+                      autoFocus
+                      maxLength={60}
+                      style={{
+                        background: 'var(--ink-3)', border: '1px solid var(--border-gold)',
+                        borderRadius: '8px', padding: '5px 12px',
+                        fontSize: '13.5px', color: 'var(--text-primary)',
+                        fontFamily: 'var(--font-sans)', outline: 'none', width: '180px',
+                      }}
+                    />
+                    <button
+                      onClick={handleSaveName}
+                      disabled={savingName}
+                      style={{
+                        padding: '5px 14px', borderRadius: '8px',
+                        border: '1px solid var(--border-gold)', background: 'var(--gold-dim)',
+                        color: 'var(--gold)', fontFamily: 'var(--font-mono)', fontSize: '10px',
+                        letterSpacing: '0.06em', cursor: savingName ? 'default' : 'pointer',
+                        opacity: savingName ? 0.5 : 1,
+                      }}
+                    >
+                      {savingName ? '…' : 'Save'}
+                    </button>
+                    <button
+                      onClick={() => { setEditingName(false); setNameInput(displayName) }}
+                      style={{
+                        padding: '5px 12px', borderRadius: '8px',
+                        border: '1px solid var(--border)', background: 'none',
+                        color: 'var(--text-tertiary)', fontFamily: 'var(--font-mono)', fontSize: '10px',
+                        letterSpacing: '0.06em', cursor: 'pointer',
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <FieldRow label="Full name" value={displayName || '—'}>
+                  <button
+                    onClick={() => { setNameInput(displayName); setEditingName(true) }}
+                    style={{
+                      padding: '3px 10px', borderRadius: '100px', flexShrink: 0,
+                      border: '1px solid var(--border)', background: 'none',
+                      color: 'var(--text-tertiary)', fontFamily: 'var(--font-mono)', fontSize: '10px',
+                      letterSpacing: '0.06em', cursor: 'pointer', transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--border-gold)'; e.currentTarget.style.color = 'var(--gold)' }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-tertiary)' }}
+                  >
+                    Edit
+                  </button>
+                </FieldRow>
+              )}
+
+              {/* Nickname field */}
+              {editingNickname ? (
+                <div style={{
+                  padding: '0.875rem 0', borderBottom: '1px solid var(--border)',
+                  display: 'flex', flexDirection: 'column', gap: '0.625rem',
+                }}>
+                  <p style={{
+                    fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.06em',
+                    textTransform: 'uppercase', color: 'var(--text-tertiary)',
+                  }}>What should Forcapedia call you?</p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <input
+                      value={nicknameInput}
+                      onChange={e => setNicknameInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') handleSaveNickname(); if (e.key === 'Escape') { setEditingNickname(false); setNicknameInput(displayNickname) } }}
+                      autoFocus
+                      maxLength={30}
+                      placeholder="e.g. Alex, Prof, Doc…"
+                      style={{
+                        background: 'var(--ink-3)', border: '1px solid var(--border-gold)',
+                        borderRadius: '8px', padding: '5px 12px',
+                        fontSize: '13.5px', color: 'var(--text-primary)',
+                        fontFamily: 'var(--font-sans)', outline: 'none', width: '180px',
+                      }}
+                    />
+                    <button
+                      onClick={handleSaveNickname}
+                      disabled={savingNickname}
+                      style={{
+                        padding: '5px 14px', borderRadius: '8px',
+                        border: '1px solid var(--border-gold)', background: 'var(--gold-dim)',
+                        color: 'var(--gold)', fontFamily: 'var(--font-mono)', fontSize: '10px',
+                        letterSpacing: '0.06em', cursor: savingNickname ? 'default' : 'pointer',
+                        opacity: savingNickname ? 0.5 : 1,
+                      }}
+                    >
+                      {savingNickname ? '…' : 'Save'}
+                    </button>
+                    <button
+                      onClick={() => { setEditingNickname(false); setNicknameInput(displayNickname) }}
+                      style={{
+                        padding: '5px 12px', borderRadius: '8px',
+                        border: '1px solid var(--border)', background: 'none',
+                        color: 'var(--text-tertiary)', fontFamily: 'var(--font-mono)', fontSize: '10px',
+                        letterSpacing: '0.06em', cursor: 'pointer',
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', fontWeight: 300 }}>
+                    This is how Forcapedia addresses you in search placeholders.
+                  </p>
+                </div>
+              ) : (
+                <FieldRow label="What should Forcapedia call you?" value={displayNickname || '—'}>
+                  <button
+                    onClick={() => { setNicknameInput(displayNickname); setEditingNickname(true) }}
+                    style={{
+                      padding: '3px 10px', borderRadius: '100px', flexShrink: 0,
+                      border: '1px solid var(--border)', background: 'none',
+                      color: 'var(--text-tertiary)', fontFamily: 'var(--font-mono)', fontSize: '10px',
+                      letterSpacing: '0.06em', cursor: 'pointer', transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--border-gold)'; e.currentTarget.style.color = 'var(--gold)' }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-tertiary)' }}
+                  >
+                    {displayNickname ? 'Edit' : 'Set'}
+                  </button>
+                </FieldRow>
+              )}
+
                 <FieldRow label="Email" value={user.email ?? '—'} />
                 <FieldRow label="Subscription">
                   <Link href="/pricing" style={{
@@ -381,29 +619,105 @@ export default function ProfileDashboard({ user, usage }: Props) {
             <section>
               <ContentHeader
                 title="Your sessions"
-                subtitle="Manage your active sessions below."
+                subtitle="Devices and browsers currently signed in to your account."
               />
 
-              <Card>
-                <div style={{ marginBottom: '1.25rem' }}>
+              {sessionsLoading ? (
+                <Card>
                   <p style={{
-                    fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.08em',
-                    textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: '1rem',
+                    fontFamily: 'var(--font-mono)', fontSize: '12px',
+                    color: 'var(--text-tertiary)', textAlign: 'center', padding: '1.5rem 0',
                   }}>
-                    Current session
+                    Loading sessions…
                   </p>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                    <SessionRow label="Auth method" value="Google OAuth 2.0" />
-                    <SessionRow label="Last sign-in" value={lastSignIn} />
-                    <SessionRow label="Account created" value={memberSince} />
-                    <SessionRow label="Provider ID" value={user.id.slice(0, 8) + '...' + user.id.slice(-4)} mono />
-                  </div>
-                </div>
+                </Card>
+              ) : sessions.length === 0 ? (
+                <Card>
+                  <p style={{
+                    fontFamily: 'var(--font-mono)', fontSize: '12px',
+                    color: 'var(--text-tertiary)', textAlign: 'center', padding: '1.5rem 0',
+                  }}>
+                    No sessions recorded yet.
+                  </p>
+                </Card>
+              ) : (
+                sessions.map(session => {
+                  const isCurrent = session.session_key === currentSessionKey
+                  return (
+                    <Card
+                      key={session.id}
+                      style={isCurrent ? { borderColor: 'rgba(212,175,55,0.35)' } : {}}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem' }}>
+                        <div style={{ display: 'flex', gap: '0.875rem', alignItems: 'flex-start' }}>
+                          <DeviceIcon type={session.device_type ?? 'desktop'} />
+                          <div>
+                            {isCurrent && (
+                              <span style={{
+                                display: 'inline-block', marginBottom: '0.4rem',
+                                fontFamily: 'var(--font-mono)', fontSize: '9px', letterSpacing: '0.08em',
+                                textTransform: 'uppercase', color: 'var(--gold)',
+                                background: 'var(--gold-dim)', border: '1px solid var(--border-gold)',
+                                padding: '2px 8px', borderRadius: '100px',
+                              }}>
+                                Current session
+                              </span>
+                            )}
+                            <p style={{ fontSize: '13.5px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>
+                              {session.browser ?? 'Unknown browser'} on {session.os ?? 'Unknown OS'}
+                            </p>
+                            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                              {session.city && session.country
+                                ? `${session.city}, ${session.country}`
+                                : session.country ?? 'Location unavailable'}
+                              {session.timezone ? ` · ${session.timezone}` : ''}
+                            </p>
+                            <p style={{
+                              fontFamily: 'var(--font-mono)', fontSize: '11px',
+                              color: 'var(--text-tertiary)', marginTop: '0.25rem',
+                            }}>
+                              Last active {formatRelativeTime(new Date(session.last_active))}
+                            </p>
+                          </div>
+                        </div>
 
-                <div style={{
-                  borderTop: '1px solid var(--border)', paddingTop: '1.25rem',
-                  display: 'flex', justifyContent: 'flex-end',
-                }}>
+                        {!isCurrent && (
+                          <button
+                            onClick={() => handleDeleteSession(session.id)}
+                            disabled={deletingSession === session.id}
+                            title="Remove this session"
+                            style={{
+                              flexShrink: 0,
+                              padding: '0.35rem 0.75rem',
+                              borderRadius: '8px',
+                              border: '1px solid var(--border)',
+                              background: 'none',
+                              color: 'var(--text-tertiary)',
+                              fontFamily: 'var(--font-mono)', fontSize: '10px',
+                              letterSpacing: '0.05em', cursor: 'pointer',
+                              opacity: deletingSession === session.id ? 0.5 : 1,
+                              transition: 'all 0.15s',
+                            }}
+                            onMouseEnter={e => {
+                              e.currentTarget.style.borderColor = 'rgba(244,124,124,0.4)'
+                              e.currentTarget.style.color = 'var(--red)'
+                            }}
+                            onMouseLeave={e => {
+                              e.currentTarget.style.borderColor = 'var(--border)'
+                              e.currentTarget.style.color = 'var(--text-tertiary)'
+                            }}
+                          >
+                            {deletingSession === session.id ? '…' : 'Remove'}
+                          </button>
+                        )}
+                      </div>
+                    </Card>
+                  )
+                })
+              )}
+
+              <Card>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                   <button
                     onClick={handleSignOut}
                     style={{
@@ -599,6 +913,48 @@ function FieldRow({ label, value, last, children }: {
         )}
       </div>
       {children}
+    </div>
+  )
+}
+
+function formatRelativeTime(date: Date): string {
+  const diff = Date.now() - date.getTime()
+  const mins = Math.floor(diff / 60_000)
+  if (mins < 2) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  if (days < 7) return `${days}d ago`
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
+
+function DeviceIcon({ type }: { type: string }) {
+  const stroke = 'var(--text-tertiary)'
+  const sw = '1.8'
+  return (
+    <div style={{
+      width: '36px', height: '36px', borderRadius: '10px',
+      border: '1px solid var(--border)', background: 'var(--ink-3)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+    }}>
+      {type === 'mobile' ? (
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round">
+          <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
+          <line x1="12" y1="18" x2="12.01" y2="18"/>
+        </svg>
+      ) : type === 'tablet' ? (
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round">
+          <rect x="4" y="2" width="16" height="20" rx="2" ry="2"/>
+          <line x1="12" y1="18" x2="12.01" y2="18"/>
+        </svg>
+      ) : (
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round">
+          <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+          <line x1="8" y1="21" x2="16" y2="21"/>
+          <line x1="12" y1="17" x2="12" y2="21"/>
+        </svg>
+      )}
     </div>
   )
 }

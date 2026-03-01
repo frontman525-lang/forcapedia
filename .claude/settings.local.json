@@ -8,7 +8,17 @@
       "Bash(node:*)",
       "Bash(\"c:/Users/shaik/Desktop/forcapedia/scripts/find_broken2.cjs\":*)",
       "Bash(python3:*)",
-      "Bash(\"c:/Users/shaik/Desktop/forcapedia/scripts/diag.mjs\":*)"
+      "Bash(\"c:/Users/shaik/Desktop/forcapedia/scripts/diag.mjs\":*)",
+      "Bash(find c:/Users/shaik/Desktop/forcapedia/supabase -name \"*.sql\" -exec wc -l {} ;)",
+      "Bash(npm ls @cashfreepayments/cashfree-js)",
+      "WebFetch(domain:sdk.cashfree.com)",
+      "WebFetch(domain:docs.cashfree.com)",
+      "WebFetch(domain:www.cashfree.com)",
+      "Bash(ls /c/Users/shaik/Desktop/forcapedia/supabase/*.sql)",
+      "Bash(wc -l /c/Users/shaik/Desktop/forcapedia/components/*.tsx)",
+      "Bash(cmd /c \"rmdir /s /q C:\\\\Users\\\\shaik\\\\Desktop\\\\forcapedia\\\\.next\")",
+      "Bash(ls \"c:\\\\Users\\\\shaik\\\\Desktop\\\\forcapedia\\\\app\\\\api\\\\trending\"\" 2>/dev/null || echo \"NOT FOUND \")",
+      "Bash(npm uninstall @aws-sdk/client-ses)"
     ]
   }
 }

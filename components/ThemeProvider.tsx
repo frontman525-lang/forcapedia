@@ -22,8 +22,8 @@ function applyTheme(t: Theme) {
     document.body.style.color = '#1A1D26'
   } else {
     el.classList.remove('light')
-    el.style.background = '#131314'
-    document.body.style.background = '#131314'
+    el.style.background = '#191919'
+    document.body.style.background = '#191919'
     document.body.style.color = '#F0EDE8'
   }
 }

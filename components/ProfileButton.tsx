@@ -4,14 +4,12 @@ import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import type { User } from '@supabase/supabase-js'
-import LoginModal from './LoginModal'
 
 export default function ProfileButton() {
   const supabase = createClient()
   const [user, setUser] = useState<User | null>(null)
   const [imgError, setImgError] = useState(false)
   const [showDropdown, setShowDropdown] = useState(false)
-  const [showLogin, setShowLogin] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -43,42 +41,38 @@ export default function ProfileButton() {
   // ── Not logged in: user icon → opens login modal ─
   if (!user) {
     return (
-      <>
-        <button
-          onClick={() => setShowLogin(true)}
-          aria-label="Sign in"
-          title="Sign in"
-          style={{
-            width: '36px', height: '36px',
-            borderRadius: '50%',
-            border: '1px solid var(--border)',
-            background: 'rgba(255,255,255,0.04)',
-            color: 'var(--text-tertiary)',
-            cursor: 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            transition: 'all 0.2s',
-            flexShrink: 0,
-          }}
-          onMouseEnter={e => {
-            e.currentTarget.style.borderColor = 'var(--border-gold)'
-            e.currentTarget.style.color = 'var(--gold)'
-            e.currentTarget.style.background = 'var(--gold-dim)'
-          }}
-          onMouseLeave={e => {
-            e.currentTarget.style.borderColor = 'var(--border)'
-            e.currentTarget.style.color = 'var(--text-tertiary)'
-            e.currentTarget.style.background = 'rgba(255,255,255,0.04)'
-          }}
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-            <circle cx="12" cy="7" r="4"/>
-          </svg>
-        </button>
-        {showLogin && (
-          <LoginModal pendingQuery="" onClose={() => setShowLogin(false)} />
-        )}
-      </>
+      <Link
+        href="/login"
+        aria-label="Sign in"
+        title="Sign in"
+        style={{
+          width: '36px', height: '36px',
+          borderRadius: '50%',
+          border: '1px solid var(--border)',
+          background: 'rgba(255,255,255,0.04)',
+          color: 'var(--text-tertiary)',
+          cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          transition: 'all 0.2s',
+          flexShrink: 0,
+          textDecoration: 'none',
+        }}
+        onMouseEnter={e => {
+          e.currentTarget.style.borderColor = 'var(--border-gold)'
+          e.currentTarget.style.color = 'var(--gold)'
+          e.currentTarget.style.background = 'var(--gold-dim)'
+        }}
+        onMouseLeave={e => {
+          e.currentTarget.style.borderColor = 'var(--border)'
+          e.currentTarget.style.color = 'var(--text-tertiary)'
+          e.currentTarget.style.background = 'rgba(255,255,255,0.04)'
+        }}
+      >
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+          <circle cx="12" cy="7" r="4"/>
+        </svg>
+      </Link>
     )
   }
 

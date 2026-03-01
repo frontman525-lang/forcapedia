@@ -6,10 +6,10 @@
   --gold-light: #E8D5B0;
   --gold-dim: rgba(201, 169, 110, 0.15);
   --gold-glow: rgba(201, 169, 110, 0.08);
-  --ink: #121417;
-  --ink-2: #171A1F;
-  --ink-3: #1E2229;
-  --surface: #1A1E25;
+  --ink: #191919;
+  --ink-2: #212121;
+  --ink-3: #2C2C2C;
+  --surface: #242424;
   --border: rgba(255, 255, 255, 0.06);
   --border-gold: rgba(201, 169, 110, 0.2);
   --text-primary: #F0EDE8;
@@ -20,10 +20,10 @@
   --amber: #F7C97E;
   --blue: #7EB8F7;
   /* Avatar tokens — neutral, theme-aware */
-  --avatar-bg: #242932;
+  --avatar-bg: #2E2E2E;
   --avatar-text: #E8E5DF;
   /* Glassmorphism card background */
-  --glass-bg: rgba(26, 30, 37, 0.88);
+  --glass-bg: rgba(33, 33, 33, 0.88);
   /* Carousel dot inactive */
   --dot-inactive: rgba(255, 255, 255, 0.2);
 }
@@ -36,10 +36,10 @@
 
   --color-gold: #C9A96E;
   --color-gold-light: #E8D5B0;
-  --color-ink: #121417;
-  --color-ink-2: #171A1F;
-  --color-ink-3: #1E2229;
-  --color-surface: #1A1E25;
+  --color-ink: #191919;
+  --color-ink-2: #212121;
+  --color-ink-3: #2C2C2C;
+  --color-surface: #242424;
   --color-text-primary: #F0EDE8;
   --color-text-secondary: rgba(240, 237, 232, 0.55);
   --color-text-tertiary: rgba(240, 237, 232, 0.3);
@@ -111,13 +111,25 @@
   from { opacity: 0; transform: translateY(18px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+@keyframes slideInFromRight {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+@keyframes slideInFromBottom {
+  from { transform: translateY(100%); }
+  to   { transform: translateY(0); }
+}
+@keyframes fadeInBackdrop {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
 
 /* ─── SHADOW / UI TOKENS (theme-aware) ──────────── */
 :root {
   --shadow-sm:    0 8px 32px rgba(0,0,0,0.4);
   --shadow-md:    0 16px 48px rgba(0,0,0,0.5);
   --shadow-focus: 0 0 0 4px rgba(201,169,110,0.07), 0 16px 48px rgba(0,0,0,0.5);
-  --nav-bg:       rgba(18,20,23,0.72);
+  --nav-bg:       rgba(25,25,25,0.72);
   --btn-bg:       rgba(255,255,255,0.04);
   --search-border: rgba(255,255,255,0.07);
 }
@@ -271,6 +283,50 @@ body::before {
   line-height: 1.85;
 }
 .article-prose li { margin-bottom: 0.4rem; }
+
+/* ─── FORMULA STYLES ─────────────────────────────────────────── */
+/* Inline formula: <code>E = mc²</code> inside a <p> */
+.article-prose code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  color: var(--gold-light);
+  background: var(--gold-dim);
+  border: 1px solid var(--border-gold);
+  border-radius: 5px;
+  padding: 1px 7px;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+/* Standalone formula block: <p class="formula-block"><code>...</code></p> */
+.article-prose p.formula-block {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 1.75rem 0;
+  padding: 1.25rem 1.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border-gold);
+  border-left: 3px solid var(--gold);
+  border-radius: 12px;
+}
+.article-prose p.formula-block code {
+  font-size: 1.05rem;
+  background: transparent;
+  border: none;
+  padding: 0;
+  letter-spacing: 0.04em;
+  color: var(--gold-light);
+}
+
+/* Light mode overrides */
+html.light .article-prose code {
+  color: var(--gold);
+  background: rgba(154, 115, 32, 0.08);
+}
+html.light .article-prose p.formula-block code {
+  color: var(--gold);
+}
 
 /* Article layout: single column by default, sticky TOC on desktop */
 .article-layout {

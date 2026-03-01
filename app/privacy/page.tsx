@@ -4,7 +4,7 @@ import Nav from '@/components/Nav'
 
 export const metadata: Metadata = { title: 'Privacy Policy - Forcapedia' }
 
-const LAST_UPDATED = 'February 24, 2026'
+const LAST_UPDATED = 'February 27, 2026'
 
 export default function PrivacyPage() {
   return (
@@ -54,7 +54,26 @@ export default function PrivacyPage() {
               <li>Operational logs needed for reliability and abuse prevention</li>
             </ul>
 
-            <h3>1.3 Billing and transaction context</h3>
+            <h3>1.3 Session and device data</h3>
+            <p>
+              When you sign in, we record session information to help you manage your
+              active devices and detect unauthorized access. This includes:
+            </p>
+            <ul>
+              <li>A randomly generated session identifier stored in your browser (localStorage)</li>
+              <li>Your IP address — used solely to derive an approximate city and country for
+                display in Account &rarr; Sessions. The raw IP address is not stored in our
+                database and is not displayed to you.</li>
+              <li>Browser name, operating system, and device type (derived from User-Agent)</li>
+              <li>Browser-reported timezone</li>
+              <li>Last active timestamp</li>
+            </ul>
+            <p>
+              You can view and remove individual sessions at any time from{' '}
+              <Link href="/profile" style={{ color: 'var(--gold)' }}>Account &rarr; Sessions</Link>.
+            </p>
+
+            <h3>1.4 Billing and transaction context</h3>
             <p>
               If paid plans are enabled, payment processing is handled by authorized payment providers.
               We may receive transaction status, invoice references, and plan details, but not full card numbers.

@@ -39,17 +39,17 @@ export const metadata: Metadata = {
 }
 
 // Runs before first paint — prevents white flash when user set light mode
-const themeInitScript = `(function(){try{var t=localStorage.getItem('fp-theme');if(t==='light'){document.documentElement.classList.add('light');document.documentElement.style.background='#F7F5F0';document.body&&(document.body.style.background='#F7F5F0');}}catch(e){}})();`
+const themeInitScript = `(function(){try{var t=localStorage.getItem('fp-theme');if(t==='light'){document.documentElement.classList.add('light');document.documentElement.style.background='#F7F5F0';document.body&&(document.body.style.background='#F7F5F0');}else{document.documentElement.style.background='#191919';}}catch(e){}})();`
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html
       lang="en"
       className={`${cormorant.variable} ${dmSans.variable} ${dmMono.variable}`}
-      style={{ background: '#121417' }}
+      style={{ background: '#191919' }}
       suppressHydrationWarning
     >
-      <body style={{ background: '#121417', color: '#F0EDE8' }} suppressHydrationWarning>
+      <body style={{ background: '#191919', color: '#F0EDE8' }} suppressHydrationWarning>
         {/* Must be first child — sets bg before React hydrates */}
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         <ThemeProvider>

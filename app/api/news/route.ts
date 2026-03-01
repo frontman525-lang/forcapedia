@@ -3,13 +3,7 @@
 // Returns last 8 news items for any topic.
 
 import { NextResponse } from 'next/server'
-
-export interface NewsItem {
-  title:       string
-  url:         string
-  source:      string
-  publishedAt: string   // ISO string
-}
+import type { NewsItem } from '@/types/news'
 
 // ── Parse RSS XML without a library ──────────────────────────────
 function parseRssItems(xml: string): NewsItem[] {
