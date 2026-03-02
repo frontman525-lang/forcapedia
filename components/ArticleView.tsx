@@ -983,29 +983,26 @@ export default function ArticleView({ article }: { article: Article }) {
                       onClick={(e) => {
                         const btn = e.currentTarget as HTMLButtonElement
                         btn.blur()
-                        const savedY = window.scrollY
+                        const beforeTop = btn.getBoundingClientRect().top
 
-                        // "Freeze-body" scroll lock — the only reliable way to
-                        // prevent iOS Safari from scroll-adjusting after a layout
-                        // change. position:fixed on body prevents ANY scroll during
-                        // the synchronous React render, then we restore everything.
+                        // Disable smooth behavior during compensation so we don't
+                        // get a second animated jump after the accordion reflow.
                         document.documentElement.style.scrollBehavior = 'auto'
-                        document.body.style.position = 'fixed'
-                        document.body.style.top = `-${savedY}px`
-                        document.body.style.width = '100%'
 
                         flushSync(() => {
                           setOpenSectionId(prev => prev === sec.id ? '' : sec.id)
                         })
 
-                        document.body.style.position = ''
-                        document.body.style.top = ''
-                        document.body.style.width = ''
-                        window.scrollTo(0, savedY)
                         requestAnimationFrame(() => {
+                          const afterTop = btn.getBoundingClientRect().top
+                          const deltaY = afterTop - beforeTop
+                          if (Math.abs(deltaY) > 0.5) {
+                            window.scrollBy({ top: deltaY, left: 0, behavior: 'auto' })
+                          }
                           document.documentElement.style.scrollBehavior = ''
                         })
                       }}
+                      onMouseDown={(e) => e.preventDefault()}
                       style={{
                         width: '100%',
                         textAlign: 'left',
