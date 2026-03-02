@@ -174,12 +174,17 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
       setTimeout(checkSelection, 80)
     }
 
-    // Handles keyboard-driven selections (Shift+Arrow) without flickering
-    // during mouse drags.
+    // On touch devices (iOS/Android), selectionchange is the primary and most
+    // reliable signal. We must NOT skip it based on pointerDownRef because
+    // pointerup often fires before the selection handles are done moving.
+    // On desktop (mouse), we still skip during drag to prevent toolbar flicker.
+    const isTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0
+
     const onSelectionChange = () => {
-      if (pointerDownRef.current) return // skip during pointer drag
+      if (pointerDownRef.current && !isTouch) return
       if (selectionDebounceRef.current) clearTimeout(selectionDebounceRef.current)
-      selectionDebounceRef.current = setTimeout(checkSelection, 120)
+      // Touch needs a longer debounce — the user may still be dragging handles
+      selectionDebounceRef.current = setTimeout(checkSelection, isTouch ? 350 : 120)
     }
 
     document.addEventListener('pointerdown', onPointerDown)

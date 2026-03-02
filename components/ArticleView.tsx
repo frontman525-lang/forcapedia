@@ -982,16 +982,25 @@ export default function ArticleView({ article }: { article: Article }) {
                     <button
                       onClick={(e) => {
                         const btn = e.currentTarget as HTMLButtonElement
-                        const savedY = window.scrollY
                         btn.blur()
-                        // flushSync forces React to render synchronously so we
-                        // can restore scroll BEFORE the browser reacts to layout changes.
-                        // This is the only reliable fix for iOS Safari, which does
-                        // not support overflow-anchor: none.
+                        const savedY = window.scrollY
+
+                        // "Freeze-body" scroll lock — the only reliable way to
+                        // prevent iOS Safari from scroll-adjusting after a layout
+                        // change. position:fixed on body prevents ANY scroll during
+                        // the synchronous React render, then we restore everything.
+                        document.documentElement.style.scrollBehavior = 'auto'
+                        document.body.style.position = 'fixed'
+                        document.body.style.top = `-${savedY}px`
+                        document.body.style.width = '100%'
+
                         flushSync(() => {
                           setOpenSectionId(prev => prev === sec.id ? '' : sec.id)
                         })
-                        document.documentElement.style.scrollBehavior = 'auto'
+
+                        document.body.style.position = ''
+                        document.body.style.top = ''
+                        document.body.style.width = ''
                         window.scrollTo(0, savedY)
                         requestAnimationFrame(() => {
                           document.documentElement.style.scrollBehavior = ''
