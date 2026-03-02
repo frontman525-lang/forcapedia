@@ -150,7 +150,6 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
     // ── Event handlers ───────────────────────────────────────────────────────
     const onPointerDown = () => {
       pointerDownRef.current = true
-      // Clear any pending selectionchange debounce
       if (selectionDebounceRef.current) {
         clearTimeout(selectionDebounceRef.current)
         selectionDebounceRef.current = null
@@ -164,6 +163,17 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
       setTimeout(checkSelection, 20)
     }
 
+    // iOS Safari: when text is selected via long-press, the browser intercepts
+    // the touch for selection handles and pointerup may not fire. pointerDownRef
+    // then stays true forever, silencing selectionchange. touchend is more
+    // reliable on iOS for signalling the end of a touch interaction.
+    const onTouchEnd = () => {
+      pointerDownRef.current = false
+      // Longer delay: iOS needs ~80ms to finalise the selection range after
+      // the user lifts their finger from a long-press text selection.
+      setTimeout(checkSelection, 80)
+    }
+
     // Handles keyboard-driven selections (Shift+Arrow) without flickering
     // during mouse drags.
     const onSelectionChange = () => {
@@ -174,10 +184,12 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
 
     document.addEventListener('pointerdown', onPointerDown)
     document.addEventListener('pointerup', onPointerUp)
+    document.addEventListener('touchend', onTouchEnd, { passive: true })
     document.addEventListener('selectionchange', onSelectionChange)
     return () => {
       document.removeEventListener('pointerdown', onPointerDown)
       document.removeEventListener('pointerup', onPointerUp)
+      document.removeEventListener('touchend', onTouchEnd)
       document.removeEventListener('selectionchange', onSelectionChange)
       if (selectionDebounceRef.current) clearTimeout(selectionDebounceRef.current)
     }

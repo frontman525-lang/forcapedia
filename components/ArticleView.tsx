@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
@@ -980,10 +981,21 @@ export default function ArticleView({ article }: { article: Article }) {
                   <div key={sec.id} style={{ borderBottom: '1px solid var(--border)' }}>
                     <button
                       onClick={(e) => {
-                        // blur immediately — prevents iOS Safari from scroll-tracking
-                        // the focused button after the DOM height changes
-                        ;(e.currentTarget as HTMLButtonElement).blur()
-                        setOpenSectionId(prev => prev === sec.id ? '' : sec.id)
+                        const btn = e.currentTarget as HTMLButtonElement
+                        const savedY = window.scrollY
+                        btn.blur()
+                        // flushSync forces React to render synchronously so we
+                        // can restore scroll BEFORE the browser reacts to layout changes.
+                        // This is the only reliable fix for iOS Safari, which does
+                        // not support overflow-anchor: none.
+                        flushSync(() => {
+                          setOpenSectionId(prev => prev === sec.id ? '' : sec.id)
+                        })
+                        document.documentElement.style.scrollBehavior = 'auto'
+                        window.scrollTo(0, savedY)
+                        requestAnimationFrame(() => {
+                          document.documentElement.style.scrollBehavior = ''
+                        })
                       }}
                       style={{
                         width: '100%',
