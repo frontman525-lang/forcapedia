@@ -980,20 +980,7 @@ export default function ArticleView({ article }: { article: Article }) {
                   <div key={sec.id} style={{ borderBottom: '1px solid var(--border)' }}>
                     <button
                       onClick={() => {
-                        // Save scroll position before React re-renders + scroll-anchoring fires
-                        const savedY = window.scrollY
                         setOpenSectionId(prev => prev === sec.id ? '' : sec.id)
-                        // Double rAF: wait for DOM paint then restore position instantly,
-                        // bypassing html { scroll-behavior: smooth } to prevent any drift.
-                        requestAnimationFrame(() => {
-                          requestAnimationFrame(() => {
-                            document.documentElement.style.scrollBehavior = 'auto'
-                            window.scrollTo(0, savedY)
-                            requestAnimationFrame(() => {
-                              document.documentElement.style.scrollBehavior = ''
-                            })
-                          })
-                        })
                       }}
                       style={{
                         width: '100%',
