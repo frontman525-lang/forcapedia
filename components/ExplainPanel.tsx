@@ -788,14 +788,19 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
 
       {/* ── Mobile: floating pill above Android bottom chrome ─────────────── */}
       {selection && !panelOpen && isMobile && (
-        <div
-          style={{
-            position: 'fixed',
-            // 88px clears Android's nav bar + Google Tap-to-search suggestion bar
-            bottom: 'calc(88px + env(safe-area-inset-bottom, 0px))',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            zIndex: 9001,
+        // Outer div: ONLY position + centering. NO animation here — if animation
+        // used transform:translateY, it would overwrite translateX(-50%) and break
+        // centering (pill shoots in from right edge instead of center).
+        <div style={{
+          position: 'fixed',
+          bottom: 'calc(88px + env(safe-area-inset-bottom, 0px))',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          zIndex: 9001,
+        }}>
+          {/* Inner div: animation + visual styling. slideInFromBottom translateY
+              only affects this element — outer centering is never touched. */}
+          <div style={{
             display: 'inline-flex',
             alignItems: 'center',
             gap: '3px',
@@ -807,105 +812,106 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
             animation: 'slideInFromBottom 0.18s ease forwards',
             whiteSpace: 'nowrap',
             maxWidth: 'calc(100vw - 32px)',
-          }}
-        >
-          {/* Gold spark + preview */}
-          <span style={{ color: 'var(--gold)', fontSize: '10px', flexShrink: 0 }}>✦</span>
-          {tooLong ? (
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-tertiary)', marginLeft: '4px' }}>
-              Select fewer than {MAX_WORDS} words
-            </span>
-          ) : (
-            <>
-              <span style={{
-                fontFamily: 'var(--font-mono)',
-                fontSize: '10px',
-                color: 'var(--text-tertiary)',
-                maxWidth: '80px',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                marginLeft: '3px',
-                marginRight: '2px',
-              }}>
-                &ldquo;{selection.text.slice(0, 18)}{selection.text.length > 18 ? '…' : ''}&rdquo;
+            position: 'relative',
+          }}>
+            {/* Gold spark + preview */}
+            <span style={{ color: 'var(--gold)', fontSize: '10px', flexShrink: 0 }}>✦</span>
+            {tooLong ? (
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-tertiary)', marginLeft: '4px' }}>
+                Select fewer than {MAX_WORDS} words
               </span>
-
-              <div style={{ width: 1, height: 14, background: 'var(--border)', margin: '0 3px', flexShrink: 0 }} />
-
-              <button
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => handleExplainButton('simple')}
-                style={{
-                  padding: '6px 14px',
-                  borderRadius: '100px',
-                  border: '1px solid var(--border-gold)',
-                  background: 'var(--gold-dim)',
-                  color: 'var(--gold)',
+            ) : (
+              <>
+                <span style={{
                   fontFamily: 'var(--font-mono)',
-                  fontSize: '11px',
-                  letterSpacing: '0.06em',
-                  cursor: 'pointer',
-                  flexShrink: 0,
-                }}
-              >
-                Simple
-              </button>
+                  fontSize: '10px',
+                  color: 'var(--text-tertiary)',
+                  maxWidth: '80px',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  marginLeft: '3px',
+                  marginRight: '2px',
+                }}>
+                  &ldquo;{selection.text.slice(0, 18)}{selection.text.length > 18 ? '…' : ''}&rdquo;
+                </span>
 
-              <button
-                onMouseDown={e => e.preventDefault()}
-                onClick={() => handleExplainButton('eli10')}
-                style={{
-                  padding: '6px 12px',
-                  borderRadius: '100px',
-                  border: '1px solid var(--border)',
-                  background: 'transparent',
-                  color: 'var(--text-secondary)',
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: '11px',
-                  letterSpacing: '0.06em',
-                  cursor: 'pointer',
-                  flexShrink: 0,
-                }}
-              >
-                For Kids
-              </button>
+                <div style={{ width: 1, height: 14, background: 'var(--border)', margin: '0 3px', flexShrink: 0 }} />
 
-              <button
-                onMouseDown={e => e.preventDefault()}
-                onClick={handleToolbarCopy}
-                style={{
-                  padding: '6px 12px',
-                  borderRadius: '100px',
-                  border: toolbarCopied ? '1px solid rgba(34,197,94,0.4)' : '1px solid var(--border)',
-                  background: toolbarCopied ? 'rgba(34,197,94,0.08)' : 'transparent',
-                  color: toolbarCopied ? '#22c55e' : 'var(--text-secondary)',
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: '11px',
-                  letterSpacing: '0.06em',
-                  cursor: 'pointer',
-                  flexShrink: 0,
-                  transition: 'all 0.15s',
-                }}
-              >
-                {toolbarCopied ? '✓' : 'Copy'}
-              </button>
-            </>
-          )}
+                <button
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={() => handleExplainButton('simple')}
+                  style={{
+                    padding: '6px 14px',
+                    borderRadius: '100px',
+                    border: '1px solid var(--border-gold)',
+                    background: 'var(--gold-dim)',
+                    color: 'var(--gold)',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '11px',
+                    letterSpacing: '0.06em',
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                  }}
+                >
+                  Simple
+                </button>
 
-          {/* Downward arrow — visually connects pill to selected text */}
-          <div style={{
-            position: 'absolute', bottom: '-6px', left: '50%',
-            transform: 'translateX(-50%)',
-            borderLeft: '5px solid transparent', borderRight: '5px solid transparent',
-            borderTop: '6px solid var(--border)',
-          }} />
-          <div style={{
-            position: 'absolute', bottom: '-5px', left: '50%',
-            transform: 'translateX(-50%)',
-            borderLeft: '4px solid transparent', borderRight: '4px solid transparent',
-            borderTop: '5px solid var(--ink-2)',
-          }} />
+                <button
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={() => handleExplainButton('eli10')}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: '100px',
+                    border: '1px solid var(--border)',
+                    background: 'transparent',
+                    color: 'var(--text-secondary)',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '11px',
+                    letterSpacing: '0.06em',
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                  }}
+                >
+                  For Kids
+                </button>
+
+                <button
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={handleToolbarCopy}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: '100px',
+                    border: toolbarCopied ? '1px solid rgba(34,197,94,0.4)' : '1px solid var(--border)',
+                    background: toolbarCopied ? 'rgba(34,197,94,0.08)' : 'transparent',
+                    color: toolbarCopied ? '#22c55e' : 'var(--text-secondary)',
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '11px',
+                    letterSpacing: '0.06em',
+                    cursor: 'pointer',
+                    flexShrink: 0,
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  {toolbarCopied ? '✓' : 'Copy'}
+                </button>
+              </>
+            )}
+
+            {/* Downward arrow — visually connects pill to selected text */}
+            <div style={{
+              position: 'absolute', bottom: '-6px', left: '50%',
+              transform: 'translateX(-50%)',
+              borderLeft: '5px solid transparent', borderRight: '5px solid transparent',
+              borderTop: '6px solid var(--border)',
+            }} />
+            <div style={{
+              position: 'absolute', bottom: '-5px', left: '50%',
+              transform: 'translateX(-50%)',
+              borderLeft: '4px solid transparent', borderRight: '4px solid transparent',
+              borderTop: '5px solid var(--ink-2)',
+            }} />
+          </div>
         </div>
       )}
 

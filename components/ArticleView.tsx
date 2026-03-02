@@ -1002,23 +1002,9 @@ export default function ArticleView({ article }: { article: Article }) {
                         document.body.style.top = ''
                         document.body.style.width = ''
                         window.scrollTo(0, savedY)
-
-                        // rAF loop: iOS Safari can fire scroll-anchor adjustments
-                        // during the 280ms grid-template-rows CSS transition. Run
-                        // every frame for 320ms and snap back if drift detected.
-                        let lockActive = true
-                        const scrollLock = () => {
-                          if (!lockActive) {
-                            document.documentElement.style.scrollBehavior = ''
-                            return
-                          }
-                          if (Math.abs(window.scrollY - savedY) > 2) {
-                            window.scrollTo(0, savedY)
-                          }
-                          requestAnimationFrame(scrollLock)
-                        }
-                        requestAnimationFrame(scrollLock)
-                        setTimeout(() => { lockActive = false }, 320)
+                        requestAnimationFrame(() => {
+                          document.documentElement.style.scrollBehavior = ''
+                        })
                       }}
                       style={{
                         width: '100%',
@@ -1053,24 +1039,13 @@ export default function ArticleView({ article }: { article: Article }) {
                         <polyline points="6 9 12 15 18 9" />
                       </svg>
                     </button>
-                    <div
-                      style={{
-                        display: 'grid',
-                        gridTemplateRows: openSectionId === sec.id ? '1fr' : '0fr',
-                        transition: 'grid-template-rows 0.28s ease',
-                        overflowAnchor: 'none' as React.CSSProperties['overflowAnchor'],
-                      }}
-                    >
+                    {openSectionId === sec.id && (
                       <div
                         className="article-prose"
-                        style={{
-                          overflow: 'hidden',
-                          paddingBottom: openSectionId === sec.id ? '1rem' : '0',
-                          transition: 'padding-bottom 0.28s ease',
-                        }}
+                        style={{ paddingBottom: '1rem', animation: 'fadeIn 0.22s ease' }}
                         dangerouslySetInnerHTML={{ __html: sec.contentHtml }}
                       />
-                    </div>
+                    )}
                   </div>
                 ))
               ) : (
