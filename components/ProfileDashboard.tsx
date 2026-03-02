@@ -19,20 +19,26 @@ interface SessionRecord {
   created_at: string
 }
 
+interface SubRecord {
+  id: string
+  tier: string
+  billing_cycle: string
+  status: string
+  amount: number
+  currency: string
+  current_period_end: string | null
+  cancel_at_period_end: boolean
+}
+
 const TIER_LIMITS: Record<string, number> = {
-  free: 50_000,
+  free:  50_000,
   tier1: 2_000_000,
   tier2: 4_000_000,
 }
 const TIER_NAMES: Record<string, string> = {
-  free: 'Free',
+  free:  'Free',
   tier1: 'Scholar',
   tier2: 'Researcher',
-}
-const TIER_PRICES: Record<string, string> = {
-  free: '$0 / month',
-  tier1: '$7.99 / month',
-  tier2: '$17.99 / month',
 }
 
 type Tab = 'account' | 'plan' | 'sessions' | 'data'
@@ -43,31 +49,58 @@ interface Props {
 }
 
 export default function ProfileDashboard({ user, usage }: Props) {
-  // Derive from props before hooks (needed for useState initializers)
-  const fullName = user.user_metadata?.full_name as string | undefined
+  const fullName  = user.user_metadata?.full_name as string | undefined
   const avatarUrl = user.user_metadata?.avatar_url as string | undefined
-
-  const nickname = user.user_metadata?.nickname as string | undefined
+  const nickname  = user.user_metadata?.nickname  as string | undefined
 
   const [tab, setTab] = useState<Tab>('account')
-  const [deleteConfirm, setDeleteConfirm] = useState(false)
-  const [imgError, setImgError] = useState(false)
-  const [editingName, setEditingName] = useState(false)
-  const [displayName, setDisplayName] = useState(fullName ?? '')
-  const [nameInput, setNameInput] = useState(fullName ?? '')
-  const [savingName, setSavingName] = useState(false)
-  const [editingNickname, setEditingNickname] = useState(false)
-  const [displayNickname, setDisplayNickname] = useState(nickname ?? '')
-  const [nicknameInput, setNicknameInput] = useState(nickname ?? '')
-  const [savingNickname, setSavingNickname] = useState(false)
-  const [sessions, setSessions] = useState<SessionRecord[]>([])
-  const [sessionsLoading, setSessionsLoading] = useState(false)
-  const [currentSessionKey, setCurrentSessionKey] = useState<string | null>(null)
-  const [deletingSession, setDeletingSession] = useState<string | null>(null)
-  const router = useRouter()
+
+  // Account editing
+  const [imgError,          setImgError]          = useState(false)
+  const [editingName,       setEditingName]        = useState(false)
+  const [displayName,       setDisplayName]        = useState(fullName ?? '')
+  const [nameInput,         setNameInput]          = useState(fullName ?? '')
+  const [savingName,        setSavingName]         = useState(false)
+  const [editingNickname,   setEditingNickname]    = useState(false)
+  const [displayNickname,   setDisplayNickname]    = useState(nickname ?? '')
+  const [nicknameInput,     setNicknameInput]      = useState(nickname ?? '')
+  const [savingNickname,    setSavingNickname]     = useState(false)
+
+  // Sessions
+  const [sessions,          setSessions]           = useState<SessionRecord[]>([])
+  const [sessionsLoading,   setSessionsLoading]    = useState(false)
+  const [currentSessionKey, setCurrentSessionKey]  = useState<string | null>(null)
+  const [deletingSession,   setDeletingSession]    = useState<string | null>(null)
+
+  // Subscription
+  const [sub,         setSub]         = useState<SubRecord | null>(null)
+  const [subLoading,  setSubLoading]  = useState(false)
+  const [cancelConfirm, setCancelConfirm] = useState(false)
+  const [cancelling,  setCancelling]  = useState(false)
+  const [cancelError, setCancelError] = useState<string | null>(null)
+  const [cancelledNow, setCancelledNow] = useState(false)
+
+  // Data tab
+  const [deleteConfirm,  setDeleteConfirm]  = useState(false)
+  const [downloading,    setDownloading]    = useState(false)
+  const [downloadError,  setDownloadError]  = useState<string | null>(null)
+
+  // Responsive
+  const [isMobile, setIsMobile] = useState(false)
+
+  const router   = useRouter()
   const supabase = createClient()
 
-  // Track this session on mount (fire-and-forget)
+  // Mobile detection
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 720px)')
+    setIsMobile(mq.matches)
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
+
+  // Session tracking on mount
   useEffect(() => {
     let key = localStorage.getItem('fp-sk')
     if (!key) {
@@ -84,34 +117,37 @@ export default function ProfileDashboard({ user, usage }: Props) {
     }).catch(() => {})
   }, [])
 
-  // Load sessions when the sessions tab is opened
+  // Load sessions when sessions tab opens
   useEffect(() => {
     if (tab !== 'sessions') return
     setSessionsLoading(true)
     fetch('/api/session/list')
       .then(r => r.json())
-      .then(data => {
-        if (Array.isArray(data)) setSessions(data)
-        setSessionsLoading(false)
-      })
+      .then(data => { if (Array.isArray(data)) setSessions(data); setSessionsLoading(false) })
       .catch(() => setSessionsLoading(false))
   }, [tab])
 
-  const initials = displayName
+  // Load subscription when plan tab opens
+  useEffect(() => {
+    if (tab !== 'plan') return
+    setSubLoading(true)
+    fetch('/api/payments/status')
+      .then(r => r.json())
+      .then(data => { setSub(data?.subscription ?? null); setSubLoading(false) })
+      .catch(() => setSubLoading(false))
+  }, [tab])
+
+  // Derived values
+  const initials   = displayName
     ? displayName.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()
     : (user.email?.[0] ?? '?').toUpperCase()
-
-  const tier = usage?.tier ?? 'free'
+  const tier       = usage?.tier ?? 'free'
   const tokensUsed = usage?.tokens_used ?? 0
   const tokenLimit = TIER_LIMITS[tier] ?? 50_000
-  const usagePct = Math.min(100, (tokensUsed / tokenLimit) * 100)
+  const usagePct   = Math.min(100, (tokensUsed / tokenLimit) * 100)
   const periodStart = usage?.period_start ? new Date(usage.period_start) : null
-
   const memberSince = new Date(user.created_at).toLocaleDateString('en-US', {
     month: 'long', day: 'numeric', year: 'numeric',
-  })
-  const lastSignIn = new Date(user.last_sign_in_at ?? user.created_at).toLocaleDateString('en-US', {
-    month: 'short', day: 'numeric', year: 'numeric',
   })
 
   async function handleSignOut() {
@@ -125,10 +161,7 @@ export default function ProfileDashboard({ user, usage }: Props) {
     setSavingName(true)
     const { error } = await supabase.auth.updateUser({ data: { full_name: trimmed } })
     setSavingName(false)
-    if (!error) {
-      setDisplayName(trimmed)
-      setEditingName(false)
-    }
+    if (!error) { setDisplayName(trimmed); setEditingName(false) }
   }
 
   async function handleSaveNickname() {
@@ -137,10 +170,7 @@ export default function ProfileDashboard({ user, usage }: Props) {
     setSavingNickname(true)
     const { error } = await supabase.auth.updateUser({ data: { nickname: trimmed || null } })
     setSavingNickname(false)
-    if (!error) {
-      setDisplayNickname(trimmed)
-      setEditingNickname(false)
-    }
+    if (!error) { setDisplayNickname(trimmed); setEditingNickname(false) }
   }
 
   async function handleDeleteSession(id: string) {
@@ -153,11 +183,61 @@ export default function ProfileDashboard({ user, usage }: Props) {
     }
   }
 
+  async function handleCancel() {
+    setCancelling(true)
+    setCancelError(null)
+    try {
+      const res = await fetch('/api/payments/cancel', { method: 'POST' })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error ?? 'Failed to cancel')
+      }
+      setCancelledNow(true)
+      setSub(prev => prev ? { ...prev, cancel_at_period_end: true } : prev)
+      setCancelConfirm(false)
+    } catch (err) {
+      setCancelError(err instanceof Error ? err.message : 'Failed to cancel')
+    } finally {
+      setCancelling(false)
+    }
+  }
+
+  async function handleDownload() {
+    setDownloading(true)
+    setDownloadError(null)
+    try {
+      const res = await fetch('/api/data/export')
+      if (!res.ok) throw new Error('Export failed')
+      const blob = await res.blob()
+      const url  = URL.createObjectURL(blob)
+      const a    = document.createElement('a')
+      const cd   = res.headers.get('content-disposition') ?? ''
+      const match = cd.match(/filename="([^"]+)"/)
+      a.href     = url
+      a.download = match?.[1] ?? `forcapedia-data-${new Date().toISOString().split('T')[0]}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+    } catch {
+      setDownloadError('Download failed. Please try again.')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
+  function formatAmount(amount: number, currency: string): string {
+    const upper = currency.toUpperCase()
+    if (upper === 'INR') return `₹${amount.toLocaleString('en-IN')}`
+    if (upper === 'USD') return `$${amount.toFixed(2)}`
+    return `${currency} ${amount}`
+  }
+
   const navItems: { key: Tab; label: string; icon: React.ReactNode }[] = [
-    { key: 'account', label: 'Account', icon: <IconPerson /> },
-    { key: 'plan', label: 'Plan & Usage', icon: <IconPlan /> },
-    { key: 'sessions', label: 'Sessions', icon: <IconGlobe /> },
-    { key: 'data', label: 'Data', icon: <IconData /> },
+    { key: 'account',  label: 'Account',    icon: <IconPerson /> },
+    { key: 'plan',     label: 'Plan & Usage', icon: <IconPlan /> },
+    { key: 'sessions', label: 'Sessions',   icon: <IconGlobe /> },
+    { key: 'data',     label: 'Data',       icon: <IconData /> },
   ]
 
   return (
@@ -165,257 +245,223 @@ export default function ProfileDashboard({ user, usage }: Props) {
       <div style={{
         maxWidth: '1020px',
         margin: '0 auto',
-        padding: '2.5rem 1.5rem',
+        padding: isMobile ? '1.25rem 1rem' : '2.5rem 1.5rem',
         display: 'flex',
-        gap: '4rem',
+        flexDirection: isMobile ? 'column' : 'row',
+        gap: isMobile ? '0' : '4rem',
         alignItems: 'flex-start',
       }}>
 
-        {/* ── Left Sidebar ── */}
-        <aside style={{ width: '220px', flexShrink: 0, position: 'sticky', top: '88px' }}>
-          {/* Avatar + welcome */}
-          <div style={{ marginBottom: '2rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-            <div style={{
-              width: '48px', height: '48px', borderRadius: '50%',
-              border: '2px solid var(--border-gold)', overflow: 'hidden',
-              background: '#2A2D36', marginBottom: '0.75rem',
-              position: 'relative',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              {avatarUrl && !imgError ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={avatarUrl}
-                  alt={displayName || 'Profile'}
-                  onError={() => setImgError(true)}
-                  style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                />
-              ) : (
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '14px', fontWeight: 600, color: 'var(--gold)' }}>
-                  {initials}
-                </span>
-              )}
+        {/* ── Sidebar (desktop) / Top nav (mobile) ── */}
+        {isMobile ? (
+          <div style={{ width: '100%', marginBottom: '1.5rem' }}>
+            {/* Avatar + welcome row */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1.125rem' }}>
+              <div style={{
+                width: '40px', height: '40px', borderRadius: '50%', flexShrink: 0,
+                border: '2px solid var(--border-gold)', overflow: 'hidden',
+                background: '#2A2D36', position: 'relative',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                {avatarUrl && !imgError ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={avatarUrl}
+                    alt={displayName || 'Profile'}
+                    onError={() => setImgError(true)}
+                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
+                ) : (
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', fontWeight: 600, color: 'var(--gold)' }}>
+                    {initials}
+                  </span>
+                )}
+              </div>
+              <div>
+                <p style={{ fontFamily: 'var(--font-serif)', fontSize: '1.05rem', fontWeight: 300, color: 'var(--text-primary)', lineHeight: 1.2 }}>
+                  Welcome, {displayName.split(' ')[0] || 'there'}.
+                </p>
+                <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', fontWeight: 300 }}>
+                  Manage your account.
+                </p>
+              </div>
             </div>
-            <p style={{
-              fontFamily: 'var(--font-serif)',
-              fontSize: '1.35rem',
-              fontWeight: 300,
-              color: 'var(--text-primary)',
-              lineHeight: 1.2,
-            }}>
-              Welcome, {displayName.split(' ')[0] || 'there'}.
-            </p>
-            <p style={{ fontSize: '12.5px', color: 'var(--text-tertiary)', fontWeight: 300 }}>
-              Manage your Forcapedia account.
-            </p>
+            {/* Horizontal scrollable pill nav */}
+            <nav style={{
+              display: 'flex', gap: '6px', overflowX: 'auto',
+              paddingBottom: '4px', scrollbarWidth: 'none',
+            } as React.CSSProperties}>
+              {navItems.map(({ key, label, icon }) => {
+                const active = tab === key
+                return (
+                  <button
+                    key={key}
+                    onClick={() => setTab(key)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '0.4rem',
+                      padding: '0.45rem 0.875rem', borderRadius: '100px', border: 'none',
+                      background: active ? 'var(--gold-dim)' : 'var(--ink-3)',
+                      color: active ? 'var(--gold)' : 'var(--text-secondary)',
+                      outline: active ? '1px solid var(--border-gold)' : '1px solid transparent',
+                      fontFamily: 'var(--font-sans)', fontSize: '12.5px',
+                      fontWeight: active ? 500 : 400,
+                      cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
+                    }}
+                  >
+                    {icon}
+                    {label}
+                  </button>
+                )
+              })}
+            </nav>
           </div>
-
-          {/* Nav items */}
-          <nav style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-            {navItems.map(({ key, label, icon }) => {
-              const active = tab === key
-              return (
-                <button
-                  key={key}
-                  onClick={() => setTab(key)}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '0.625rem',
-                    padding: '0.6rem 0.875rem',
-                    borderRadius: '10px',
-                    border: 'none',
-                    borderLeft: active ? '2px solid var(--gold)' : '2px solid transparent',
-                    background: active ? 'var(--gold-dim)' : 'transparent',
-                    color: active ? 'var(--gold)' : 'var(--text-secondary)',
-                    fontFamily: 'var(--font-sans)',
-                    fontSize: '13.5px',
-                    fontWeight: active ? 500 : 400,
-                    cursor: 'pointer',
-                    textAlign: 'left',
-                    width: '100%',
-                    transition: 'all 0.15s',
-                  }}
-                  onMouseEnter={e => {
-                    if (!active) e.currentTarget.style.color = 'var(--text-primary)'
-                  }}
-                  onMouseLeave={e => {
-                    if (!active) e.currentTarget.style.color = 'var(--text-secondary)'
-                  }}
-                >
-                  {icon}
-                  {label}
-                </button>
-              )
-            })}
-          </nav>
-
-          {/* Back to home */}
-          <div style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border)' }}>
-            <Link href="/" style={{
-              display: 'flex', alignItems: 'center', gap: '0.4rem',
-              fontFamily: 'var(--font-mono)', fontSize: '11px',
-              letterSpacing: '0.05em', textTransform: 'uppercase',
-              color: 'var(--text-tertiary)', textDecoration: 'none',
-              transition: 'color 0.2s',
-            }}
-              onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.color = 'var(--gold)' }}
-              onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.color = 'var(--text-tertiary)' }}
-            >
-              ← Home
-            </Link>
-          </div>
-        </aside>
+        ) : (
+          <aside style={{ width: '220px', flexShrink: 0, position: 'sticky', top: '88px' }}>
+            <div style={{ marginBottom: '2rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+              <div style={{
+                width: '48px', height: '48px', borderRadius: '50%',
+                border: '2px solid var(--border-gold)', overflow: 'hidden',
+                background: '#2A2D36', marginBottom: '0.75rem',
+                position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                {avatarUrl && !imgError ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={avatarUrl}
+                    alt={displayName || 'Profile'}
+                    onError={() => setImgError(true)}
+                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
+                ) : (
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '14px', fontWeight: 600, color: 'var(--gold)' }}>
+                    {initials}
+                  </span>
+                )}
+              </div>
+              <p style={{ fontFamily: 'var(--font-serif)', fontSize: '1.35rem', fontWeight: 300, color: 'var(--text-primary)', lineHeight: 1.2 }}>
+                Welcome, {displayName.split(' ')[0] || 'there'}.
+              </p>
+              <p style={{ fontSize: '12.5px', color: 'var(--text-tertiary)', fontWeight: 300 }}>
+                Manage your Forcapedia account.
+              </p>
+            </div>
+            <nav style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+              {navItems.map(({ key, label, icon }) => {
+                const active = tab === key
+                return (
+                  <button
+                    key={key}
+                    onClick={() => setTab(key)}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '0.625rem',
+                      padding: '0.6rem 0.875rem', borderRadius: '10px', border: 'none',
+                      borderLeft: active ? '2px solid var(--gold)' : '2px solid transparent',
+                      background: active ? 'var(--gold-dim)' : 'transparent',
+                      color: active ? 'var(--gold)' : 'var(--text-secondary)',
+                      fontFamily: 'var(--font-sans)', fontSize: '13.5px',
+                      fontWeight: active ? 500 : 400,
+                      cursor: 'pointer', textAlign: 'left', width: '100%', transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={e => { if (!active) e.currentTarget.style.color = 'var(--text-primary)' }}
+                    onMouseLeave={e => { if (!active) e.currentTarget.style.color = 'var(--text-secondary)' }}
+                  >
+                    {icon}
+                    {label}
+                  </button>
+                )
+              })}
+            </nav>
+            <div style={{ marginTop: '2rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border)' }}>
+              <Link
+                href="/"
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '0.4rem',
+                  fontFamily: 'var(--font-mono)', fontSize: '11px',
+                  letterSpacing: '0.05em', textTransform: 'uppercase',
+                  color: 'var(--text-tertiary)', textDecoration: 'none', transition: 'color 0.2s',
+                }}
+                onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.color = 'var(--gold)' }}
+                onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.color = 'var(--text-tertiary)' }}
+              >
+                ← Home
+              </Link>
+            </div>
+          </aside>
+        )}
 
         {/* ── Right Content ── */}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ flex: 1, minWidth: 0, width: '100%' }}>
 
           {/* ACCOUNT TAB */}
           {tab === 'account' && (
             <section>
-              <ContentHeader
-                title="Your account"
-                subtitle="Manage your account information."
-              />
+              <ContentHeader title="Your account" subtitle="Manage your account information." />
 
-              {/* Account card */}
               <Card>
+                {/* Full name field */}
                 {editingName ? (
-                <div style={{
-                  padding: '0.875rem 0', borderBottom: '1px solid var(--border)',
-                  display: 'flex', flexDirection: 'column', gap: '0.625rem',
-                }}>
-                  <p style={{
-                    fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.06em',
-                    textTransform: 'uppercase', color: 'var(--text-tertiary)',
-                  }}>Full name</p>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                    <input
-                      value={nameInput}
-                      onChange={e => setNameInput(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') handleSaveName(); if (e.key === 'Escape') { setEditingName(false); setNameInput(displayName) } }}
-                      autoFocus
-                      maxLength={60}
-                      style={{
-                        background: 'var(--ink-3)', border: '1px solid var(--border-gold)',
-                        borderRadius: '8px', padding: '5px 12px',
-                        fontSize: '13.5px', color: 'var(--text-primary)',
-                        fontFamily: 'var(--font-sans)', outline: 'none', width: '180px',
-                      }}
-                    />
-                    <button
-                      onClick={handleSaveName}
-                      disabled={savingName}
-                      style={{
-                        padding: '5px 14px', borderRadius: '8px',
-                        border: '1px solid var(--border-gold)', background: 'var(--gold-dim)',
-                        color: 'var(--gold)', fontFamily: 'var(--font-mono)', fontSize: '10px',
-                        letterSpacing: '0.06em', cursor: savingName ? 'default' : 'pointer',
-                        opacity: savingName ? 0.5 : 1,
-                      }}
-                    >
-                      {savingName ? '…' : 'Save'}
-                    </button>
-                    <button
-                      onClick={() => { setEditingName(false); setNameInput(displayName) }}
-                      style={{
-                        padding: '5px 12px', borderRadius: '8px',
-                        border: '1px solid var(--border)', background: 'none',
-                        color: 'var(--text-tertiary)', fontFamily: 'var(--font-mono)', fontSize: '10px',
-                        letterSpacing: '0.06em', cursor: 'pointer',
-                      }}
-                    >
-                      Cancel
-                    </button>
+                  <div style={{ padding: '0.875rem 0', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+                    <p style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-tertiary)' }}>Full name</p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <input
+                        value={nameInput}
+                        onChange={e => setNameInput(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleSaveName(); if (e.key === 'Escape') { setEditingName(false); setNameInput(displayName) } }}
+                        autoFocus maxLength={60}
+                        style={{
+                          background: 'var(--ink-3)', border: '1px solid var(--border-gold)',
+                          borderRadius: '8px', padding: '5px 12px',
+                          fontSize: '13.5px', color: 'var(--text-primary)',
+                          fontFamily: 'var(--font-sans)', outline: 'none',
+                          width: isMobile ? '100%' : '180px', boxSizing: 'border-box',
+                        }}
+                      />
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <SmBtn variant="gold" onClick={handleSaveName} disabled={savingName}>{savingName ? '…' : 'Save'}</SmBtn>
+                        <SmBtn onClick={() => { setEditingName(false); setNameInput(displayName) }}>Cancel</SmBtn>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <FieldRow label="Full name" value={displayName || '—'}>
-                  <button
-                    onClick={() => { setNameInput(displayName); setEditingName(true) }}
-                    style={{
-                      padding: '3px 10px', borderRadius: '100px', flexShrink: 0,
-                      border: '1px solid var(--border)', background: 'none',
-                      color: 'var(--text-tertiary)', fontFamily: 'var(--font-mono)', fontSize: '10px',
-                      letterSpacing: '0.06em', cursor: 'pointer', transition: 'all 0.15s',
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--border-gold)'; e.currentTarget.style.color = 'var(--gold)' }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-tertiary)' }}
-                  >
-                    Edit
-                  </button>
-                </FieldRow>
-              )}
+                ) : (
+                  <FieldRow label="Full name" value={displayName || '—'}>
+                    <EditBtn onClick={() => { setNameInput(displayName); setEditingName(true) }}>Edit</EditBtn>
+                  </FieldRow>
+                )}
 
-              {/* Nickname field */}
-              {editingNickname ? (
-                <div style={{
-                  padding: '0.875rem 0', borderBottom: '1px solid var(--border)',
-                  display: 'flex', flexDirection: 'column', gap: '0.625rem',
-                }}>
-                  <p style={{
-                    fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.06em',
-                    textTransform: 'uppercase', color: 'var(--text-tertiary)',
-                  }}>What should Forcapedia call you?</p>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                    <input
-                      value={nicknameInput}
-                      onChange={e => setNicknameInput(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') handleSaveNickname(); if (e.key === 'Escape') { setEditingNickname(false); setNicknameInput(displayNickname) } }}
-                      autoFocus
-                      maxLength={30}
-                      placeholder="e.g. Alex, Prof, Doc…"
-                      style={{
-                        background: 'var(--ink-3)', border: '1px solid var(--border-gold)',
-                        borderRadius: '8px', padding: '5px 12px',
-                        fontSize: '13.5px', color: 'var(--text-primary)',
-                        fontFamily: 'var(--font-sans)', outline: 'none', width: '180px',
-                      }}
-                    />
-                    <button
-                      onClick={handleSaveNickname}
-                      disabled={savingNickname}
-                      style={{
-                        padding: '5px 14px', borderRadius: '8px',
-                        border: '1px solid var(--border-gold)', background: 'var(--gold-dim)',
-                        color: 'var(--gold)', fontFamily: 'var(--font-mono)', fontSize: '10px',
-                        letterSpacing: '0.06em', cursor: savingNickname ? 'default' : 'pointer',
-                        opacity: savingNickname ? 0.5 : 1,
-                      }}
-                    >
-                      {savingNickname ? '…' : 'Save'}
-                    </button>
-                    <button
-                      onClick={() => { setEditingNickname(false); setNicknameInput(displayNickname) }}
-                      style={{
-                        padding: '5px 12px', borderRadius: '8px',
-                        border: '1px solid var(--border)', background: 'none',
-                        color: 'var(--text-tertiary)', fontFamily: 'var(--font-mono)', fontSize: '10px',
-                        letterSpacing: '0.06em', cursor: 'pointer',
-                      }}
-                    >
-                      Cancel
-                    </button>
+                {/* Nickname field */}
+                {editingNickname ? (
+                  <div style={{ padding: '0.875rem 0', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+                    <p style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-tertiary)' }}>What should Forcapedia call you?</p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <input
+                        value={nicknameInput}
+                        onChange={e => setNicknameInput(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') handleSaveNickname(); if (e.key === 'Escape') { setEditingNickname(false); setNicknameInput(displayNickname) } }}
+                        autoFocus maxLength={30} placeholder="e.g. Alex, Prof, Doc…"
+                        style={{
+                          background: 'var(--ink-3)', border: '1px solid var(--border-gold)',
+                          borderRadius: '8px', padding: '5px 12px',
+                          fontSize: '13.5px', color: 'var(--text-primary)',
+                          fontFamily: 'var(--font-sans)', outline: 'none',
+                          width: isMobile ? '100%' : '180px', boxSizing: 'border-box',
+                        }}
+                      />
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <SmBtn variant="gold" onClick={handleSaveNickname} disabled={savingNickname}>{savingNickname ? '…' : 'Save'}</SmBtn>
+                        <SmBtn onClick={() => { setEditingNickname(false); setNicknameInput(displayNickname) }}>Cancel</SmBtn>
+                      </div>
+                    </div>
+                    <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', fontWeight: 300 }}>
+                      This is how Forcapedia addresses you in search placeholders.
+                    </p>
                   </div>
-                  <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', fontWeight: 300 }}>
-                    This is how Forcapedia addresses you in search placeholders.
-                  </p>
-                </div>
-              ) : (
-                <FieldRow label="What should Forcapedia call you?" value={displayNickname || '—'}>
-                  <button
-                    onClick={() => { setNicknameInput(displayNickname); setEditingNickname(true) }}
-                    style={{
-                      padding: '3px 10px', borderRadius: '100px', flexShrink: 0,
-                      border: '1px solid var(--border)', background: 'none',
-                      color: 'var(--text-tertiary)', fontFamily: 'var(--font-mono)', fontSize: '10px',
-                      letterSpacing: '0.06em', cursor: 'pointer', transition: 'all 0.15s',
-                    }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--border-gold)'; e.currentTarget.style.color = 'var(--gold)' }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-tertiary)' }}
-                  >
-                    {displayNickname ? 'Edit' : 'Set'}
-                  </button>
-                </FieldRow>
-              )}
+                ) : (
+                  <FieldRow label="What should Forcapedia call you?" value={displayNickname || '—'}>
+                    <EditBtn onClick={() => { setNicknameInput(displayNickname); setEditingNickname(true) }}>
+                      {displayNickname ? 'Edit' : 'Set'}
+                    </EditBtn>
+                  </FieldRow>
+                )}
 
                 <FieldRow label="Email" value={user.email ?? '—'} />
                 <FieldRow label="Subscription">
@@ -425,9 +471,8 @@ export default function ProfileDashboard({ user, usage }: Props) {
                     color: 'var(--gold)', textDecoration: 'none',
                     padding: '3px 10px', borderRadius: '100px',
                     background: 'var(--gold-dim)', border: '1px solid var(--border-gold)',
-                    transition: 'background 0.2s',
                   }}>
-                    {TIER_NAMES[tier]} — {TIER_PRICES[tier]}
+                    {TIER_NAMES[tier]}
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/>
                     </svg>
@@ -437,21 +482,16 @@ export default function ProfileDashboard({ user, usage }: Props) {
               </Card>
 
               {/* Sign-in methods */}
-              <p style={{
-                fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.1em',
-                textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: '0.75rem',
-              }}>
+              <p style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: '0.75rem' }}>
                 Sign-in methods
               </p>
               <Card>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0', gap: '1rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', minWidth: 0 }}>
                     <GoogleIcon />
-                    <div>
-                      <p style={{ fontSize: '13.5px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '2px' }}>
-                        Google
-                      </p>
-                      <p style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-tertiary)' }}>
+                    <div style={{ minWidth: 0 }}>
+                      <p style={{ fontSize: '13.5px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '2px' }}>Google</p>
+                      <p style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-tertiary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {user.email}
                       </p>
                     </div>
@@ -460,97 +500,182 @@ export default function ProfileDashboard({ user, usage }: Props) {
                     fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.06em',
                     textTransform: 'uppercase', color: 'var(--green)',
                     background: 'rgba(111,207,151,0.1)', border: '1px solid rgba(111,207,151,0.25)',
-                    padding: '2px 8px', borderRadius: '100px',
+                    padding: '2px 8px', borderRadius: '100px', flexShrink: 0,
                   }}>
                     Active
                   </span>
                 </div>
               </Card>
+
+              <div style={{ marginTop: '0.25rem' }}>
+                <button
+                  onClick={handleSignOut}
+                  style={{
+                    padding: '0.5rem 1.125rem', borderRadius: '10px',
+                    border: '1px solid rgba(244,124,124,0.3)',
+                    background: 'rgba(244,124,124,0.06)',
+                    color: 'var(--red)', fontFamily: 'var(--font-sans)',
+                    fontSize: '13px', fontWeight: 500, cursor: 'pointer', transition: 'all 0.2s',
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'rgba(244,124,124,0.12)'; e.currentTarget.style.borderColor = 'rgba(244,124,124,0.5)' }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'rgba(244,124,124,0.06)'; e.currentTarget.style.borderColor = 'rgba(244,124,124,0.3)' }}
+                >
+                  Sign out
+                </button>
+              </div>
             </section>
           )}
 
           {/* PLAN TAB */}
           {tab === 'plan' && (
             <section>
-              <ContentHeader
-                title="Plan & Usage"
-                subtitle="Your current plan and token usage this period."
-              />
+              <ContentHeader title="Plan & Usage" subtitle="Your current plan and token usage this period." />
 
-              {/* Current plan card */}
               <Card>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0', marginBottom: '1rem' }}>
+                {/* Plan header row */}
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem', padding: '0.5rem 0', marginBottom: '1rem' }}>
                   <div>
                     <p style={{ fontSize: '13px', color: 'var(--text-tertiary)', marginBottom: '0.35rem' }}>Current plan</p>
-                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.625rem' }}>
-                      <span style={{
-                        fontFamily: 'var(--font-serif)', fontSize: '1.5rem', fontWeight: 400,
-                        color: 'var(--text-primary)',
-                      }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.625rem', flexWrap: 'wrap' }}>
+                      <span style={{ fontFamily: 'var(--font-serif)', fontSize: '1.5rem', fontWeight: 400, color: 'var(--text-primary)' }}>
                         {TIER_NAMES[tier]}
                       </span>
-                      <span style={{
-                        fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-tertiary)',
-                      }}>
-                        {TIER_PRICES[tier]}
-                      </span>
+                      {subLoading ? (
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-tertiary)' }}>…</span>
+                      ) : sub ? (
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-tertiary)' }}>
+                          {formatAmount(sub.amount, sub.currency)} / {sub.billing_cycle}
+                        </span>
+                      ) : tier === 'free' ? (
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-tertiary)' }}>Free</span>
+                      ) : null}
                     </div>
+                    {(sub?.cancel_at_period_end || cancelledNow) && sub?.current_period_end && (
+                      <p style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
+                        Access until {new Date(sub.current_period_end).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                      </p>
+                    )}
                   </div>
-                  {tier !== 'free' ? (
-                    <span style={{
-                      fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.06em',
-                      textTransform: 'uppercase', color: 'var(--gold)',
-                      background: 'var(--gold-dim)', border: '1px solid var(--border-gold)',
-                      padding: '3px 10px', borderRadius: '100px',
-                    }}>
-                      Active
-                    </span>
-                  ) : (
-                    <Link href="/pricing" style={{
-                      fontFamily: 'var(--font-mono)', fontSize: '11px', letterSpacing: '0.04em',
-                      textTransform: 'uppercase', color: 'var(--gold)',
-                      background: 'var(--gold-dim)', border: '1px solid var(--border-gold)',
-                      padding: '6px 14px', borderRadius: '10px',
-                      textDecoration: 'none', transition: 'background 0.2s',
-                    }}>
-                      Upgrade →
-                    </Link>
-                  )}
+
+                  {/* Status pill + Cancel button */}
+                  <div style={{ display: 'flex', gap: '0.625rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                    {tier !== 'free' ? (
+                      <>
+                        {(sub?.cancel_at_period_end || cancelledNow) ? (
+                          <span style={{
+                            fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.06em',
+                            textTransform: 'uppercase', color: 'var(--text-tertiary)',
+                            background: 'var(--ink-3)', border: '1px solid var(--border)',
+                            padding: '3px 10px', borderRadius: '100px',
+                          }}>
+                            Cancels at period end
+                          </span>
+                        ) : (
+                          <span style={{
+                            fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.06em',
+                            textTransform: 'uppercase', color: 'var(--gold)',
+                            background: 'var(--gold-dim)', border: '1px solid var(--border-gold)',
+                            padding: '3px 10px', borderRadius: '100px',
+                          }}>
+                            Active
+                          </span>
+                        )}
+                        {!sub?.cancel_at_period_end && !cancelledNow && !subLoading && (
+                          <button
+                            onClick={() => setCancelConfirm(true)}
+                            style={{
+                              padding: '3px 10px', borderRadius: '100px',
+                              border: '1px solid rgba(244,124,124,0.3)',
+                              background: 'rgba(244,124,124,0.06)',
+                              color: 'var(--red)', fontFamily: 'var(--font-mono)',
+                              fontSize: '10px', letterSpacing: '0.06em',
+                              cursor: 'pointer', transition: 'all 0.15s',
+                            }}
+                            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(244,124,124,0.12)' }}
+                            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(244,124,124,0.06)' }}
+                          >
+                            Cancel plan
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <Link href="/pricing" style={{
+                        fontFamily: 'var(--font-mono)', fontSize: '11px', letterSpacing: '0.04em',
+                        textTransform: 'uppercase', color: 'var(--gold)',
+                        background: 'var(--gold-dim)', border: '1px solid var(--border-gold)',
+                        padding: '6px 14px', borderRadius: '10px',
+                        textDecoration: 'none',
+                      }}>
+                        Upgrade →
+                      </Link>
+                    )}
+                  </div>
                 </div>
 
-                {/* Usage bar */}
+                {/* Cancel confirmation inline */}
+                {cancelConfirm && (
+                  <div style={{
+                    padding: '1rem', borderRadius: '10px', marginBottom: '1rem',
+                    background: 'rgba(244,124,124,0.05)', border: '1px solid rgba(244,124,124,0.2)',
+                  }}>
+                    <p style={{ fontSize: '13px', color: 'var(--text-primary)', marginBottom: '0.75rem' }}>
+                      Cancel subscription? You&apos;ll keep access until the end of your current billing period.
+                    </p>
+                    {cancelError && (
+                      <p style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--red)', marginBottom: '0.5rem' }}>
+                        {cancelError}
+                      </p>
+                    )}
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <button
+                        onClick={handleCancel}
+                        disabled={cancelling}
+                        style={{
+                          padding: '0.4rem 1rem', borderRadius: '8px',
+                          border: '1px solid rgba(244,124,124,0.5)',
+                          background: 'rgba(244,124,124,0.15)',
+                          color: 'var(--red)', fontFamily: 'var(--font-sans)',
+                          fontSize: '12px', fontWeight: 500,
+                          cursor: cancelling ? 'default' : 'pointer', opacity: cancelling ? 0.6 : 1,
+                        }}
+                      >
+                        {cancelling ? 'Cancelling…' : 'Yes, cancel'}
+                      </button>
+                      <button
+                        onClick={() => { setCancelConfirm(false); setCancelError(null) }}
+                        disabled={cancelling}
+                        style={{
+                          padding: '0.4rem 1rem', borderRadius: '8px',
+                          border: '1px solid var(--border)', background: 'none',
+                          color: 'var(--text-secondary)', fontFamily: 'var(--font-sans)',
+                          fontSize: '12px', cursor: 'pointer',
+                        }}
+                      >
+                        Keep plan
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Token usage bar */}
                 <div style={{ borderTop: '1px solid var(--border)', paddingTop: '1.25rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
-                    <span style={{
-                      fontFamily: 'var(--font-mono)', fontSize: '11px', letterSpacing: '0.05em',
-                      textTransform: 'uppercase', color: 'var(--text-tertiary)',
-                    }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', flexWrap: 'wrap', gap: '0.25rem' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', letterSpacing: '0.05em', textTransform: 'uppercase', color: 'var(--text-tertiary)' }}>
                       Token usage
                     </span>
-                    <span style={{
-                      fontFamily: 'var(--font-mono)', fontSize: '11px',
-                      color: usagePct > 80 ? 'var(--red)' : 'var(--text-tertiary)',
-                    }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: usagePct > 80 ? 'var(--red)' : 'var(--text-tertiary)' }}>
                       {tokensUsed.toLocaleString()} / {tokenLimit.toLocaleString()}
                     </span>
                   </div>
-                  <div style={{
-                    height: '5px', background: 'var(--border)',
-                    borderRadius: '100px', overflow: 'hidden',
-                  }}>
+                  <div style={{ height: '5px', background: 'var(--border)', borderRadius: '100px', overflow: 'hidden' }}>
                     <div style={{
-                      height: '100%',
-                      width: `${usagePct}%`,
+                      height: '100%', width: `${usagePct}%`,
                       background: usagePct > 80 ? 'var(--red)' : usagePct > 50 ? 'var(--amber)' : 'var(--gold)',
-                      borderRadius: '100px',
-                      transition: 'width 0.6s ease',
+                      borderRadius: '100px', transition: 'width 0.6s ease',
                     }} />
                   </div>
                   {periodStart && (
-                    <p style={{
-                      fontFamily: 'var(--font-mono)', fontSize: '10px',
-                      color: 'var(--text-tertiary)', marginTop: '0.5rem',
-                    }}>
+                    <p style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-tertiary)', marginTop: '0.5rem' }}>
                       Resets {new Date(periodStart.getFullYear(), periodStart.getMonth() + 1, 1)
                         .toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                     </p>
@@ -559,56 +684,55 @@ export default function ProfileDashboard({ user, usage }: Props) {
               </Card>
 
               {/* Plan features comparison */}
-              <p style={{
-                fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.1em',
-                textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: '0.75rem',
-              }}>
-                What's included
+              <p style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: '0.75rem' }}>
+                What&apos;s included
               </p>
               <Card>
-                {[
-                  { label: 'Monthly tokens', free: '50,000', tier1: '2,000,000', tier2: '4,000,000' },
-                  { label: 'Follow-ups per article', free: '1', tier1: 'Unlimited', tier2: 'Unlimited' },
-                  { label: 'Search history', free: '—', tier1: '✓', tier2: '✓' },
-                  { label: 'Priority processing', free: '—', tier1: '—', tier2: '✓' },
-                ].map((row, i, arr) => (
-                  <div key={row.label} style={{
-                    display: 'grid', gridTemplateColumns: '1fr repeat(3, 80px)',
-                    alignItems: 'center', gap: '1rem',
-                    padding: '0.75rem 0',
-                    borderTop: i > 0 ? '1px solid var(--border)' : 'none',
-                  }}>
-                    <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{row.label}</span>
-                    {(['free', 'tier1', 'tier2'] as const).map(t => (
-                      <span key={t} style={{
-                        fontFamily: 'var(--font-mono)', fontSize: '11.5px', textAlign: 'center',
-                        color: tier === t ? 'var(--gold)' : 'var(--text-tertiary)',
-                        fontWeight: tier === t ? 600 : 400,
+                <div style={{ overflowX: 'auto' }}>
+                  <div style={{ minWidth: '340px' }}>
+                    {[
+                      { label: 'Monthly tokens',        free: '50,000',   tier1: '2,000,000', tier2: '4,000,000' },
+                      { label: 'Follow-ups per article', free: '1',        tier1: 'Unlimited', tier2: 'Unlimited' },
+                      { label: 'Search history',        free: '—',        tier1: '✓',         tier2: '✓' },
+                      { label: 'Priority processing',   free: '—',        tier1: '—',         tier2: '✓' },
+                    ].map((row, i) => (
+                      <div key={row.label} style={{
+                        display: 'grid', gridTemplateColumns: '1fr repeat(3, 80px)',
+                        alignItems: 'center', gap: '1rem', padding: '0.75rem 0',
+                        borderTop: i > 0 ? '1px solid var(--border)' : 'none',
                       }}>
-                        {t === 'free' ? row.free : t === 'tier1' ? row.tier1 : row.tier2}
-                      </span>
+                        <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{row.label}</span>
+                        {(['free', 'tier1', 'tier2'] as const).map(t => (
+                          <span key={t} style={{
+                            fontFamily: 'var(--font-mono)', fontSize: '11.5px', textAlign: 'center',
+                            color: tier === t ? 'var(--gold)' : 'var(--text-tertiary)',
+                            fontWeight: tier === t ? 600 : 400,
+                          }}>
+                            {t === 'free' ? row.free : t === 'tier1' ? row.tier1 : row.tier2}
+                          </span>
+                        ))}
+                      </div>
                     ))}
+                    <div style={{
+                      display: 'grid', gridTemplateColumns: '1fr repeat(3, 80px)',
+                      gap: '1rem', paddingBottom: '0.5rem', borderBottom: '1px solid var(--border)',
+                      marginTop: '-0.25rem',
+                    }}>
+                      <span />
+                      {(['Free', 'Scholar', 'Researcher'] as const).map((n, i) => {
+                        const t = ['free', 'tier1', 'tier2'][i]
+                        return (
+                          <span key={n} style={{
+                            fontFamily: 'var(--font-mono)', fontSize: '9px', letterSpacing: '0.08em',
+                            textTransform: 'uppercase', textAlign: 'center',
+                            color: tier === t ? 'var(--gold)' : 'var(--text-tertiary)',
+                          }}>
+                            {n}{tier === t ? ' ✓' : ''}
+                          </span>
+                        )
+                      })}
+                    </div>
                   </div>
-                ))}
-                {/* Column headers */}
-                <div style={{
-                  display: 'grid', gridTemplateColumns: '1fr repeat(3, 80px)',
-                  gap: '1rem', paddingBottom: '0.5rem', borderBottom: '1px solid var(--border)',
-                  marginTop: '-0.25rem',
-                }}>
-                  <span />
-                  {(['Free', 'Scholar', 'Researcher'] as const).map((n, i) => {
-                    const t = ['free', 'tier1', 'tier2'][i]
-                    return (
-                      <span key={n} style={{
-                        fontFamily: 'var(--font-mono)', fontSize: '9px', letterSpacing: '0.08em',
-                        textTransform: 'uppercase', textAlign: 'center',
-                        color: tier === t ? 'var(--gold)' : 'var(--text-tertiary)',
-                      }}>
-                        {n}{tier === t ? ' ✓' : ''}
-                      </span>
-                    )
-                  })}
                 </div>
               </Card>
             </section>
@@ -617,26 +741,17 @@ export default function ProfileDashboard({ user, usage }: Props) {
           {/* SESSIONS TAB */}
           {tab === 'sessions' && (
             <section>
-              <ContentHeader
-                title="Your sessions"
-                subtitle="Devices and browsers currently signed in to your account."
-              />
+              <ContentHeader title="Your sessions" subtitle="Devices and browsers currently signed in to your account." />
 
               {sessionsLoading ? (
                 <Card>
-                  <p style={{
-                    fontFamily: 'var(--font-mono)', fontSize: '12px',
-                    color: 'var(--text-tertiary)', textAlign: 'center', padding: '1.5rem 0',
-                  }}>
+                  <p style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-tertiary)', textAlign: 'center', padding: '1.5rem 0' }}>
                     Loading sessions…
                   </p>
                 </Card>
               ) : sessions.length === 0 ? (
                 <Card>
-                  <p style={{
-                    fontFamily: 'var(--font-mono)', fontSize: '12px',
-                    color: 'var(--text-tertiary)', textAlign: 'center', padding: '1.5rem 0',
-                  }}>
+                  <p style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-tertiary)', textAlign: 'center', padding: '1.5rem 0' }}>
                     No sessions recorded yet.
                   </p>
                 </Card>
@@ -644,14 +759,11 @@ export default function ProfileDashboard({ user, usage }: Props) {
                 sessions.map(session => {
                   const isCurrent = session.session_key === currentSessionKey
                   return (
-                    <Card
-                      key={session.id}
-                      style={isCurrent ? { borderColor: 'rgba(212,175,55,0.35)' } : {}}
-                    >
+                    <Card key={session.id} style={isCurrent ? { borderColor: 'rgba(212,175,55,0.35)' } : {}}>
                       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem' }}>
-                        <div style={{ display: 'flex', gap: '0.875rem', alignItems: 'flex-start' }}>
+                        <div style={{ display: 'flex', gap: '0.875rem', alignItems: 'flex-start', minWidth: 0 }}>
                           <DeviceIcon type={session.device_type ?? 'desktop'} />
-                          <div>
+                          <div style={{ minWidth: 0 }}>
                             {isCurrent && (
                               <span style={{
                                 display: 'inline-block', marginBottom: '0.4rem',
@@ -663,7 +775,7 @@ export default function ProfileDashboard({ user, usage }: Props) {
                                 Current session
                               </span>
                             )}
-                            <p style={{ fontSize: '13.5px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '0.25rem' }}>
+                            <p style={{ fontSize: '13.5px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '0.25rem', wordBreak: 'break-word' }}>
                               {session.browser ?? 'Unknown browser'} on {session.os ?? 'Unknown OS'}
                             </p>
                             <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
@@ -672,40 +784,25 @@ export default function ProfileDashboard({ user, usage }: Props) {
                                 : session.country ?? 'Location unavailable'}
                               {session.timezone ? ` · ${session.timezone}` : ''}
                             </p>
-                            <p style={{
-                              fontFamily: 'var(--font-mono)', fontSize: '11px',
-                              color: 'var(--text-tertiary)', marginTop: '0.25rem',
-                            }}>
+                            <p style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
                               Last active {formatRelativeTime(new Date(session.last_active))}
                             </p>
                           </div>
                         </div>
-
                         {!isCurrent && (
                           <button
                             onClick={() => handleDeleteSession(session.id)}
                             disabled={deletingSession === session.id}
                             title="Remove this session"
                             style={{
-                              flexShrink: 0,
-                              padding: '0.35rem 0.75rem',
-                              borderRadius: '8px',
-                              border: '1px solid var(--border)',
-                              background: 'none',
-                              color: 'var(--text-tertiary)',
-                              fontFamily: 'var(--font-mono)', fontSize: '10px',
-                              letterSpacing: '0.05em', cursor: 'pointer',
-                              opacity: deletingSession === session.id ? 0.5 : 1,
-                              transition: 'all 0.15s',
+                              flexShrink: 0, padding: '0.35rem 0.75rem', borderRadius: '8px',
+                              border: '1px solid var(--border)', background: 'none',
+                              color: 'var(--text-tertiary)', fontFamily: 'var(--font-mono)',
+                              fontSize: '10px', letterSpacing: '0.05em', cursor: 'pointer',
+                              opacity: deletingSession === session.id ? 0.5 : 1, transition: 'all 0.15s',
                             }}
-                            onMouseEnter={e => {
-                              e.currentTarget.style.borderColor = 'rgba(244,124,124,0.4)'
-                              e.currentTarget.style.color = 'var(--red)'
-                            }}
-                            onMouseLeave={e => {
-                              e.currentTarget.style.borderColor = 'var(--border)'
-                              e.currentTarget.style.color = 'var(--text-tertiary)'
-                            }}
+                            onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(244,124,124,0.4)'; e.currentTarget.style.color = 'var(--red)' }}
+                            onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-tertiary)' }}
                           >
                             {deletingSession === session.id ? '…' : 'Remove'}
                           </button>
@@ -721,23 +818,14 @@ export default function ProfileDashboard({ user, usage }: Props) {
                   <button
                     onClick={handleSignOut}
                     style={{
-                      padding: '0.5rem 1.125rem',
-                      borderRadius: '10px',
+                      padding: '0.5rem 1.125rem', borderRadius: '10px',
                       border: '1px solid rgba(244,124,124,0.3)',
                       background: 'rgba(244,124,124,0.06)',
-                      color: 'var(--red)',
-                      fontFamily: 'var(--font-sans)',
-                      fontSize: '13px', fontWeight: 500,
-                      cursor: 'pointer', transition: 'all 0.2s',
+                      color: 'var(--red)', fontFamily: 'var(--font-sans)',
+                      fontSize: '13px', fontWeight: 500, cursor: 'pointer', transition: 'all 0.2s',
                     }}
-                    onMouseEnter={e => {
-                      e.currentTarget.style.background = 'rgba(244,124,124,0.12)'
-                      e.currentTarget.style.borderColor = 'rgba(244,124,124,0.5)'
-                    }}
-                    onMouseLeave={e => {
-                      e.currentTarget.style.background = 'rgba(244,124,124,0.06)'
-                      e.currentTarget.style.borderColor = 'rgba(244,124,124,0.3)'
-                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'rgba(244,124,124,0.12)'; e.currentTarget.style.borderColor = 'rgba(244,124,124,0.5)' }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'rgba(244,124,124,0.06)'; e.currentTarget.style.borderColor = 'rgba(244,124,124,0.3)' }}
                   >
                     Sign out of all devices
                   </button>
@@ -749,45 +837,46 @@ export default function ProfileDashboard({ user, usage }: Props) {
           {/* DATA TAB */}
           {tab === 'data' && (
             <section>
-              <ContentHeader
-                title="Your data"
-                subtitle="Manage your personal data stored with Forcapedia."
-              />
+              <ContentHeader title="Your data" subtitle="Manage your personal data stored with Forcapedia." />
 
               {/* Download */}
               <Card>
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1.5rem' }}>
-                  <div>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1.5rem', flexWrap: isMobile ? 'wrap' : 'nowrap' }}>
+                  <div style={{ minWidth: 0 }}>
                     <p style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '0.35rem' }}>
                       Download account data
                     </p>
                     <p style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
-                      Export all your searches, saved articles, and account information.
+                      Export your account information, usage stats, and session history as a JSON file.
                     </p>
+                    {downloadError && (
+                      <p style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--red)', marginTop: '0.5rem' }}>
+                        {downloadError}
+                      </p>
+                    )}
                   </div>
                   <button
-                    disabled
+                    onClick={handleDownload}
+                    disabled={downloading}
                     style={{
-                      padding: '0.5rem 1.125rem',
-                      borderRadius: '10px',
-                      border: '1px solid var(--border)',
-                      background: 'var(--ink-3)',
-                      color: 'var(--text-tertiary)',
-                      fontFamily: 'var(--font-sans)', fontSize: '13px',
-                      fontWeight: 500, cursor: 'not-allowed',
-                      flexShrink: 0, whiteSpace: 'nowrap',
+                      padding: '0.5rem 1.125rem', borderRadius: '10px',
+                      border: '1px solid var(--border-gold)',
+                      background: downloading ? 'var(--ink-3)' : 'var(--gold-dim)',
+                      color: downloading ? 'var(--text-tertiary)' : 'var(--gold)',
+                      fontFamily: 'var(--font-sans)', fontSize: '13px', fontWeight: 500,
+                      cursor: downloading ? 'default' : 'pointer',
+                      flexShrink: 0, whiteSpace: 'nowrap', transition: 'all 0.2s',
                     }}
-                    title="Coming soon"
                   >
-                    Coming soon
+                    {downloading ? 'Downloading…' : 'Download'}
                   </button>
                 </div>
               </Card>
 
               {/* Delete */}
               <Card style={{ borderColor: 'rgba(244,124,124,0.2)' }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1.5rem' }}>
-                  <div>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1.5rem', flexWrap: isMobile ? 'wrap' : 'nowrap' }}>
+                  <div style={{ minWidth: 0 }}>
                     <p style={{ fontSize: '14px', fontWeight: 500, color: 'var(--red)', marginBottom: '0.35rem' }}>
                       Delete account
                     </p>
@@ -799,14 +888,12 @@ export default function ProfileDashboard({ user, usage }: Props) {
                     <button
                       onClick={() => setDeleteConfirm(true)}
                       style={{
-                        padding: '0.5rem 1.125rem',
-                        borderRadius: '10px',
+                        padding: '0.5rem 1.125rem', borderRadius: '10px',
                         border: '1px solid rgba(244,124,124,0.4)',
                         background: 'rgba(244,124,124,0.08)',
-                        color: 'var(--red)',
-                        fontFamily: 'var(--font-sans)', fontSize: '13px', fontWeight: 500,
-                        cursor: 'pointer', flexShrink: 0,
-                        transition: 'all 0.2s',
+                        color: 'var(--red)', fontFamily: 'var(--font-sans)',
+                        fontSize: '13px', fontWeight: 500, cursor: 'pointer',
+                        flexShrink: 0, whiteSpace: 'nowrap', transition: 'all 0.2s',
                       }}
                       onMouseEnter={e => { e.currentTarget.style.background = 'rgba(244,124,124,0.15)' }}
                       onMouseLeave={e => { e.currentTarget.style.background = 'rgba(244,124,124,0.08)' }}
@@ -815,10 +902,10 @@ export default function ProfileDashboard({ user, usage }: Props) {
                     </button>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-end', flexShrink: 0 }}>
-                      <p style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--red)', textAlign: 'right' }}>
-                        Are you sure?
+                      <p style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-secondary)', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        To delete, email support:
                       </p>
-                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                         <button
                           onClick={() => setDeleteConfirm(false)}
                           style={{
@@ -830,18 +917,19 @@ export default function ProfileDashboard({ user, usage }: Props) {
                         >
                           Cancel
                         </button>
-                        <button
+                        <a
+                          href="mailto:hello@forcapedia.com?subject=Account%20Deletion%20Request"
                           style={{
+                            display: 'inline-block',
                             padding: '0.4rem 0.875rem', borderRadius: '8px',
                             border: '1px solid rgba(244,124,124,0.5)',
                             background: 'rgba(244,124,124,0.15)',
                             color: 'var(--red)', fontFamily: 'var(--font-sans)',
-                            fontSize: '12px', fontWeight: 500, cursor: 'not-allowed',
+                            fontSize: '12px', fontWeight: 500, textDecoration: 'none',
                           }}
-                          title="Contact support to delete your account"
                         >
-                          Contact support
-                        </button>
+                          Email support
+                        </a>
                       </div>
                     </div>
                   )}
@@ -858,13 +946,55 @@ export default function ProfileDashboard({ user, usage }: Props) {
 
 // ── Small reusable pieces ──────────────────────────────────────────────────────
 
+function SmBtn({
+  children, onClick, disabled, variant,
+}: {
+  children: React.ReactNode
+  onClick?: () => void
+  disabled?: boolean
+  variant?: 'gold'
+}) {
+  const isGold = variant === 'gold'
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        padding: '5px 14px', borderRadius: '8px',
+        border: isGold ? '1px solid var(--border-gold)' : '1px solid var(--border)',
+        background: isGold ? 'var(--gold-dim)' : 'none',
+        color: isGold ? 'var(--gold)' : 'var(--text-tertiary)',
+        fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.06em',
+        cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.5 : 1,
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
+function EditBtn({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: '3px 10px', borderRadius: '100px', flexShrink: 0,
+        border: '1px solid var(--border)', background: 'none',
+        color: 'var(--text-tertiary)', fontFamily: 'var(--font-mono)', fontSize: '10px',
+        letterSpacing: '0.06em', cursor: 'pointer', transition: 'all 0.15s',
+      }}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--border-gold)'; e.currentTarget.style.color = 'var(--gold)' }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-tertiary)' }}
+    >
+      {children}
+    </button>
+  )
+}
+
 function ContentHeader({ title, subtitle }: { title: string; subtitle: string }) {
   return (
     <div style={{ marginBottom: '1.75rem' }}>
-      <h1 style={{
-        fontFamily: 'var(--font-serif)', fontSize: '1.75rem', fontWeight: 300,
-        color: 'var(--text-primary)', marginBottom: '0.35rem', lineHeight: 1.2,
-      }}>
+      <h1 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.75rem', fontWeight: 300, color: 'var(--text-primary)', marginBottom: '0.35rem', lineHeight: 1.2 }}>
         {title}
       </h1>
       <p style={{ fontSize: '13.5px', color: 'var(--text-tertiary)', fontWeight: 300 }}>
@@ -896,10 +1026,10 @@ function FieldRow({ label, value, last, children }: {
   return (
     <div style={{
       display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      padding: '0.875rem 0',
+      padding: '0.875rem 0', gap: '1rem',
       borderBottom: last ? 'none' : '1px solid var(--border)',
     }}>
-      <div>
+      <div style={{ minWidth: 0 }}>
         <p style={{
           fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.06em',
           textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: '4px',
@@ -907,7 +1037,7 @@ function FieldRow({ label, value, last, children }: {
           {label}
         </p>
         {value && (
-          <p style={{ fontSize: '14px', color: 'var(--text-primary)', fontWeight: 400 }}>
+          <p style={{ fontSize: '14px', color: 'var(--text-primary)', fontWeight: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {value}
           </p>
         )}
@@ -955,21 +1085,6 @@ function DeviceIcon({ type }: { type: string }) {
           <line x1="12" y1="17" x2="12" y2="21"/>
         </svg>
       )}
-    </div>
-  )
-}
-
-function SessionRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-      <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{label}</span>
-      <span style={{
-        fontFamily: mono ? 'var(--font-mono)' : 'var(--font-sans)',
-        fontSize: mono ? '11px' : '13px',
-        color: 'var(--text-primary)',
-      }}>
-        {value}
-      </span>
     </div>
   )
 }

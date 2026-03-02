@@ -39,12 +39,14 @@ export async function POST(req: Request) {
   // ── Check for existing active subscription ────────────────────────────────
   const { data: existing } = await supabase
     .from('subscriptions')
-    .select('status, tier, cashfree_sub_id')
+    .select('status, tier, billing_cycle, cashfree_sub_id')
     .eq('user_id', user.id)
     .eq('status', 'active')
     .single()
 
-  if (existing && existing.tier === tier) {
+  // Only block if exact same tier AND exact same billing cycle
+  // Upgrading tier or switching billing cycle (monthly ↔ yearly) is always allowed
+  if (existing && existing.tier === tier && existing.billing_cycle === billingCycle) {
     return NextResponse.json(
       { error: 'You are already subscribed to this plan. Visit your profile to manage it.' },
       { status: 409 },
