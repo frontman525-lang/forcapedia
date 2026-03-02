@@ -1,20 +1,19 @@
+import HomeBackground from '@/components/HomeBackground'
+
 export default function PricingLoading() {
   return (
-    <div style={{
-      minHeight: '100vh',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      background: 'var(--ink)',
-    }}>
-      <span style={{
-        color: 'var(--text-tertiary)',
-        fontFamily: 'var(--font-mono)',
-        fontSize: '13px',
-        letterSpacing: '0.06em',
+    <>
+      <HomeBackground noMars />
+      <div style={{
+        position: 'fixed', inset: 0, zIndex: 10,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
       }}>
-        Loading…
-      </span>
-    </div>
+        <div className="fp-dots">
+          <span className="fp-dot" />
+          <span className="fp-dot" />
+          <span className="fp-dot" />
+        </div>
+      </div>
+    </>
   )
 }

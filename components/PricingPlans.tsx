@@ -368,15 +368,16 @@ export default function PricingPlans({
           }
 
           return (
-            <div key={tier.key} id={tier.name.toLowerCase()} style={{
+            <div key={tier.key} id={tier.name.toLowerCase()} className="glass-card" style={{
               display: 'flex', flexDirection: 'column',
-              background: 'var(--surface)',
-              border: `1px solid ${isSamePlan ? 'var(--gold)' : isHighlighted ? 'var(--border-gold)' : 'var(--border)'}`,
+              borderColor: isSamePlan ? 'var(--gold)' : isHighlighted ? 'rgba(201,169,110,0.45)' : undefined,
               borderRadius: '16px', padding: '1.4rem',
               position: 'relative',
-              boxShadow: isHighlighted
-                ? '0 0 0 1px rgba(201,169,110,0.12), 0 20px 60px rgba(0,0,0,0.35)'
-                : '0 4px 24px rgba(0,0,0,0.18)',
+              boxShadow: isSamePlan
+                ? 'inset 0 1px 0 rgba(201,169,110,0.15), 0 0 0 1px rgba(201,169,110,0.25), 0 0 55px rgba(201,169,110,0.18)'
+                : isHighlighted
+                  ? 'inset 0 1px 0 rgba(201,169,110,0.10), 0 0 0 1px rgba(201,169,110,0.18), 0 0 60px rgba(201,169,110,0.14)'
+                  : undefined,
             }}>
 
               {/* Badges */}

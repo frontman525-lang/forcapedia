@@ -337,7 +337,7 @@ Email: hello@forcapedia.com
   zip.file('data.json',   JSON.stringify(jsonData, null, 2))
   zip.file('README.txt',  readme)
 
-  const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
+  const zipBuffer = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' })
 
   const filename = `forcapedia-data-${dateSlug}.zip`
   return new NextResponse(zipBuffer, {

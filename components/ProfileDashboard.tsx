@@ -241,7 +241,7 @@ export default function ProfileDashboard({ user, usage }: Props) {
   ]
 
   return (
-    <main style={{ minHeight: '100vh', paddingTop: '64px', paddingBottom: '4rem', position: 'relative', zIndex: 1 }}>
+    <main className="starfield-content" style={{ minHeight: '100vh', paddingTop: '64px', paddingBottom: '4rem', position: 'relative', zIndex: 10 }}>
       <div style={{
         maxWidth: '1020px',
         margin: '0 auto',
@@ -1007,14 +1007,10 @@ function ContentHeader({ title, subtitle }: { title: string; subtitle: string })
 
 function Card({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
-    <div style={{
-      background: 'var(--surface)',
-      border: '1px solid var(--border)',
-      borderRadius: '16px',
-      padding: '1.25rem 1.5rem',
-      marginBottom: '1.25rem',
-      ...style,
-    }}>
+    <div
+      className="glass-card"
+      style={{ borderRadius: '16px', padding: '1.25rem 1.5rem', marginBottom: '1.25rem', ...style }}
+    >
       {children}
     </div>
   )

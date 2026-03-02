@@ -160,15 +160,17 @@ html.light .hb-bg::before {
 }
 `
 
-export default function HomeBackground() {
+export default function HomeBackground({ noMars = false }: { noMars?: boolean }) {
   return (
     <>
       {/* eslint-disable-next-line react/no-danger */}
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <div className="hb-bg" />
-      <div className="hb-mars-container">
-        <div className="hb-mars" />
-      </div>
+      {!noMars && (
+        <div className="hb-mars-container">
+          <div className="hb-mars" />
+        </div>
+      )}
     </>
   )
 }
