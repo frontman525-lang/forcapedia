@@ -979,7 +979,18 @@ export default function ArticleView({ article }: { article: Article }) {
                 articleSections.map(sec => (
                   <div key={sec.id} style={{ borderBottom: '1px solid var(--border)' }}>
                     <button
-                      onClick={() => setOpenSectionId(prev => prev === sec.id ? '' : sec.id)}
+                      onClick={(e) => {
+                        const isOpening = openSectionId !== sec.id
+                        const btn = e.currentTarget
+                        setOpenSectionId(prev => prev === sec.id ? '' : sec.id)
+                        if (isOpening) {
+                          // Scroll section header to just below the nav bar
+                          setTimeout(() => {
+                            const top = btn.getBoundingClientRect().top + window.scrollY - 80
+                            window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' })
+                          }, 30)
+                        }
+                      }}
                       style={{
                         width: '100%',
                         textAlign: 'left',

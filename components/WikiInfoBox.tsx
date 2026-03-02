@@ -7,6 +7,7 @@ interface WikiSummary {
   description?: string
   extract?: string
   thumbnail?: { source: string; width: number; height: number }
+  originalimage?: { source: string; width: number; height: number }
   type?: string
 }
 
@@ -27,7 +28,7 @@ function parseMetaRows(extract: string): { label: string; value: string }[] {
   const diedMatch = extract.match(/died\s+(?:on\s+)?([A-Z][a-z]+ \d{1,2},? \d{4}|\d{1,2} [A-Z][a-z]+ \d{4})/i)
   if (diedMatch) rows.push({ label: 'Died', value: diedMatch[1] })
 
-  // Nationality: look for "X–nationality–" patterns
+  // Nationality
   const natMatch = extract.match(/\b(American|British|French|German|Iranian|Chinese|Indian|Russian|Japanese|Italian|Spanish|Australian|Brazilian|Canadian)\b/)
   if (natMatch) rows.push({ label: 'Nationality', value: natMatch[1] })
 
@@ -57,58 +58,51 @@ export default function WikiInfoBox({ wikiUrl, articleTitle }: WikiInfoBoxProps)
 
   if (!data || !data.thumbnail || imgError) return null
 
-  // First two sentences from extract as short descriptor
-  const sentences = data.extract?.match(/[^.!?]+[.!?]+/g) ?? []
-  const shortExtract = sentences.slice(0, 2).join(' ').trim()
-
   const metaRows = data.extract ? parseMetaRows(data.extract) : []
+  const imgSrc = data.originalimage?.source ?? data.thumbnail.source
 
   return (
     <div
       className="wiki-info-box"
       style={{
-        display: 'flex',
-        gap: '1.25rem',
-        alignItems: 'flex-start',
-        padding: '1.25rem',
         marginBottom: '2rem',
-        background: 'rgba(255,255,255,0.025)',
         border: '1px solid var(--border)',
         borderRadius: '16px',
-        flexWrap: 'wrap',
+        overflow: 'hidden',
+        background: 'rgba(255,255,255,0.02)',
       }}
     >
-      {/* Image */}
-      <img
-        src={data.thumbnail.source}
-        alt={data.title}
-        onError={() => setImgError(true)}
-        style={{
-          width: 100,
-          height: 120,
-          objectFit: 'cover',
-          objectPosition: 'top',
-          borderRadius: '10px',
-          flexShrink: 0,
-          display: 'block',
-        }}
-      />
+      {/* Full-width image */}
+      <div style={{ width: '100%', height: 280, overflow: 'hidden', background: 'rgba(255,255,255,0.04)' }}>
+        <img
+          src={imgSrc}
+          alt={data.title}
+          onError={() => setImgError(true)}
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'cover',
+            objectPosition: 'top center',
+            display: 'block',
+          }}
+        />
+      </div>
 
-      {/* Info */}
-      <div style={{ flex: '1 1 180px', minWidth: 0 }}>
+      {/* Info section below image */}
+      <div style={{ padding: '0.875rem 1.125rem 1rem' }}>
         {/* Name */}
         <p style={{
           fontFamily: 'var(--font-serif)',
-          fontSize: '1.1rem',
+          fontSize: '1rem',
           fontWeight: 400,
           color: 'var(--text-primary)',
           marginBottom: '0.2rem',
-          lineHeight: 1.25,
+          lineHeight: 1.3,
         }}>
           {data.title}
         </p>
 
-        {/* Profession/role */}
+        {/* Role / description */}
         {data.description && (
           <p style={{
             fontFamily: 'var(--font-mono)',
@@ -116,7 +110,7 @@ export default function WikiInfoBox({ wikiUrl, articleTitle }: WikiInfoBoxProps)
             letterSpacing: '0.07em',
             textTransform: 'uppercase',
             color: 'var(--gold)',
-            marginBottom: '0.625rem',
+            marginBottom: metaRows.length > 0 ? '0.75rem' : '0.625rem',
           }}>
             {data.description}
           </p>
@@ -125,36 +119,25 @@ export default function WikiInfoBox({ wikiUrl, articleTitle }: WikiInfoBoxProps)
         {/* Metadata rows */}
         {metaRows.length > 0 && (
           <div style={{
+            borderTop: '1px solid var(--border)',
+            paddingTop: '0.625rem',
+            marginBottom: '0.625rem',
             display: 'grid',
             gridTemplateColumns: 'auto 1fr',
-            columnGap: '0.75rem',
-            rowGap: '0.2rem',
-            marginBottom: '0.625rem',
+            columnGap: '1rem',
+            rowGap: '0.3rem',
           }}>
             {metaRows.map(row => (
               <>
-                <span key={`l-${row.label}`} style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-tertiary)', letterSpacing: '0.05em', whiteSpace: 'nowrap' }}>
+                <span key={`l-${row.label}`} style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-tertiary)', letterSpacing: '0.05em', whiteSpace: 'nowrap', alignSelf: 'center' }}>
                   {row.label}
                 </span>
-                <span key={`v-${row.label}`} style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-secondary)', letterSpacing: '0.04em' }}>
+                <span key={`v-${row.label}`} style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-secondary)', letterSpacing: '0.04em', alignSelf: 'center' }}>
                   {row.value}
                 </span>
               </>
             ))}
           </div>
-        )}
-
-        {/* Short extract */}
-        {shortExtract && metaRows.length === 0 && (
-          <p style={{
-            fontSize: '12.5px',
-            color: 'var(--text-secondary)',
-            lineHeight: 1.65,
-            fontWeight: 300,
-            marginBottom: '0.5rem',
-          }}>
-            {shortExtract}
-          </p>
         )}
 
         <a
