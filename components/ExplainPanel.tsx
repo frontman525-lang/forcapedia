@@ -786,56 +786,58 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
         </div>
       )}
 
-      {/* ── Mobile: bottom action bar when text selected ──────────────────── */}
+      {/* ── Mobile: floating pill above Android bottom chrome ─────────────── */}
       {selection && !panelOpen && isMobile && (
         <div
           style={{
             position: 'fixed',
-            bottom: 0,
-            left: 0, right: 0,
-            zIndex: 9000,
+            // 88px clears Android's nav bar + Google Tap-to-search suggestion bar
+            bottom: 'calc(88px + env(safe-area-inset-bottom, 0px))',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 9001,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '3px',
             background: 'var(--ink-2)',
-            borderTop: '1px solid var(--border)',
-            padding: '0.75rem 1rem calc(0.75rem + env(safe-area-inset-bottom, 0px))',
-            display: 'flex',
-            gap: '0.625rem',
-            animation: 'slideInFromBottom 0.2s ease forwards',
+            border: '1px solid var(--border)',
+            borderRadius: '100px',
+            padding: tooLong ? '8px 18px' : '5px 7px 5px 12px',
+            boxShadow: '0 6px 28px rgba(0,0,0,0.65)',
+            animation: 'slideInFromBottom 0.18s ease forwards',
+            whiteSpace: 'nowrap',
+            maxWidth: 'calc(100vw - 32px)',
           }}
         >
-          <div style={{
-            flex: 1,
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.4rem',
-            fontFamily: 'var(--font-mono)',
-            fontSize: '11px',
-            color: 'var(--gold)',
-            letterSpacing: '0.04em',
-            overflow: 'hidden',
-          }}>
-            <span>✦</span>
-            {tooLong ? (
-              <span style={{ color: 'var(--text-tertiary)', fontSize: '10px' }}>
-                Select fewer than {MAX_WORDS} words
-              </span>
-            ) : (
+          {/* Gold spark + preview */}
+          <span style={{ color: 'var(--gold)', fontSize: '10px', flexShrink: 0 }}>✦</span>
+          {tooLong ? (
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-tertiary)', marginLeft: '4px' }}>
+              Select fewer than {MAX_WORDS} words
+            </span>
+          ) : (
+            <>
               <span style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: '10px',
                 color: 'var(--text-tertiary)',
+                maxWidth: '80px',
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap',
+                marginLeft: '3px',
+                marginRight: '2px',
               }}>
-                &ldquo;{selection.text.slice(0, 40)}{selection.text.length > 40 ? '…' : ''}&rdquo;
+                &ldquo;{selection.text.slice(0, 18)}{selection.text.length > 18 ? '…' : ''}&rdquo;
               </span>
-            )}
-          </div>
-          {!tooLong && (
-            <>
+
+              <div style={{ width: 1, height: 14, background: 'var(--border)', margin: '0 3px', flexShrink: 0 }} />
+
               <button
                 onMouseDown={e => e.preventDefault()}
                 onClick={() => handleExplainButton('simple')}
                 style={{
-                  padding: '8px 16px',
+                  padding: '6px 14px',
                   borderRadius: '100px',
                   border: '1px solid var(--border-gold)',
                   background: 'var(--gold-dim)',
@@ -849,11 +851,12 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
               >
                 Simple
               </button>
+
               <button
                 onMouseDown={e => e.preventDefault()}
                 onClick={() => handleExplainButton('eli10')}
                 style={{
-                  padding: '8px 14px',
+                  padding: '6px 12px',
                   borderRadius: '100px',
                   border: '1px solid var(--border)',
                   background: 'transparent',
@@ -867,11 +870,12 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
               >
                 For Kids
               </button>
+
               <button
                 onMouseDown={e => e.preventDefault()}
                 onClick={handleToolbarCopy}
                 style={{
-                  padding: '8px 14px',
+                  padding: '6px 12px',
                   borderRadius: '100px',
                   border: toolbarCopied ? '1px solid rgba(34,197,94,0.4)' : '1px solid var(--border)',
                   background: toolbarCopied ? 'rgba(34,197,94,0.08)' : 'transparent',
@@ -888,6 +892,20 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
               </button>
             </>
           )}
+
+          {/* Downward arrow — visually connects pill to selected text */}
+          <div style={{
+            position: 'absolute', bottom: '-6px', left: '50%',
+            transform: 'translateX(-50%)',
+            borderLeft: '5px solid transparent', borderRight: '5px solid transparent',
+            borderTop: '6px solid var(--border)',
+          }} />
+          <div style={{
+            position: 'absolute', bottom: '-5px', left: '50%',
+            transform: 'translateX(-50%)',
+            borderLeft: '4px solid transparent', borderRight: '4px solid transparent',
+            borderTop: '5px solid var(--ink-2)',
+          }} />
         </div>
       )}
 

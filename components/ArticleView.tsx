@@ -1002,9 +1002,23 @@ export default function ArticleView({ article }: { article: Article }) {
                         document.body.style.top = ''
                         document.body.style.width = ''
                         window.scrollTo(0, savedY)
-                        requestAnimationFrame(() => {
-                          document.documentElement.style.scrollBehavior = ''
-                        })
+
+                        // rAF loop: iOS Safari can fire scroll-anchor adjustments
+                        // during the 280ms grid-template-rows CSS transition. Run
+                        // every frame for 320ms and snap back if drift detected.
+                        let lockActive = true
+                        const scrollLock = () => {
+                          if (!lockActive) {
+                            document.documentElement.style.scrollBehavior = ''
+                            return
+                          }
+                          if (Math.abs(window.scrollY - savedY) > 2) {
+                            window.scrollTo(0, savedY)
+                          }
+                          requestAnimationFrame(scrollLock)
+                        }
+                        requestAnimationFrame(scrollLock)
+                        setTimeout(() => { lockActive = false }, 320)
                       }}
                       style={{
                         width: '100%',
