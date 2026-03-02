@@ -241,7 +241,7 @@ export default function ProfileDashboard({ user, usage }: Props) {
   ]
 
   return (
-    <main style={{ minHeight: '100vh', paddingTop: '64px', paddingBottom: '4rem' }}>
+    <main style={{ minHeight: '100vh', paddingTop: '64px', paddingBottom: '4rem', position: 'relative', zIndex: 1 }}>
       <div style={{
         maxWidth: '1020px',
         margin: '0 auto',
