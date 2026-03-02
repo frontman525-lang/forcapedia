@@ -979,7 +979,10 @@ export default function ArticleView({ article }: { article: Article }) {
                 articleSections.map(sec => (
                   <div key={sec.id} style={{ borderBottom: '1px solid var(--border)' }}>
                     <button
-                      onClick={() => {
+                      onClick={(e) => {
+                        // blur immediately — prevents iOS Safari from scroll-tracking
+                        // the focused button after the DOM height changes
+                        ;(e.currentTarget as HTMLButtonElement).blur()
                         setOpenSectionId(prev => prev === sec.id ? '' : sec.id)
                       }}
                       style={{
