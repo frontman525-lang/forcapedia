@@ -10,6 +10,7 @@ export default function ProfileButton() {
   const [user, setUser] = useState<User | null>(null)
   const [imgError, setImgError] = useState(false)
   const [showDropdown, setShowDropdown] = useState(false)
+  const [showSignOutModal, setShowSignOutModal] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -33,9 +34,14 @@ export default function ProfileButton() {
   }, [showDropdown])
 
   async function signOut() {
-    setShowDropdown(false)
+    setShowSignOutModal(false)
     await supabase.auth.signOut()
     setUser(null)
+  }
+
+  function requestSignOut() {
+    setShowDropdown(false)
+    setShowSignOutModal(true)
   }
 
   // ── Not logged in: user icon → opens login modal ─
@@ -216,7 +222,7 @@ export default function ProfileButton() {
 
           {/* Sign out */}
           <button
-            onClick={signOut}
+            onClick={requestSignOut}
             style={{
               width: '100%',
               padding: '0.65rem 1rem',
@@ -257,7 +263,137 @@ export default function ProfileButton() {
           from { opacity: 0; transform: translateY(-8px); }
           to   { opacity: 1; transform: translateY(0); }
         }
+        @keyframes soModalIn {
+          from { opacity: 0; transform: scale(0.94); }
+          to   { opacity: 1; transform: scale(1); }
+        }
+        @keyframes soOverlayIn {
+          from { opacity: 0; }
+          to   { opacity: 1; }
+        }
       `}</style>
+
+      {/* ── Sign-out confirmation modal ─────────────────────────── */}
+      {showSignOutModal && (
+        <div
+          onClick={() => setShowSignOutModal(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 9000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(0,0,0,0.60)',
+            backdropFilter: 'blur(6px)',
+            WebkitBackdropFilter: 'blur(6px)',
+            animation: 'soOverlayIn 0.18s ease forwards',
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              width: '100%', maxWidth: '340px',
+              margin: '0 1rem',
+              background: 'linear-gradient(160deg, rgba(255,255,255,0.032) 0%, rgba(255,255,255,0.010) 100%), #0d0d0d',
+              border: '1px solid rgba(255,255,255,0.10)',
+              boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.07), 0 24px 64px rgba(0,0,0,0.7)',
+              borderRadius: '20px',
+              padding: '1.75rem 1.5rem 1.5rem',
+              animation: 'soModalIn 0.22s cubic-bezier(0.34,1.56,0.64,1) forwards',
+            }}
+          >
+            {/* Icon */}
+            <div style={{
+              width: '40px', height: '40px', borderRadius: '50%',
+              background: 'rgba(244,124,124,0.10)',
+              border: '1px solid rgba(244,124,124,0.20)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              marginBottom: '1rem',
+            }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F47C7C" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                <polyline points="16 17 21 12 16 7"/>
+                <line x1="21" y1="12" x2="9" y2="12"/>
+              </svg>
+            </div>
+
+            <p style={{
+              fontFamily: 'var(--font-serif)',
+              fontSize: '1.1rem',
+              fontWeight: 500,
+              color: 'var(--text-primary)',
+              marginBottom: '0.4rem',
+            }}>
+              Sign out?
+            </p>
+            <p style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '11px',
+              color: 'var(--text-tertiary)',
+              letterSpacing: '0.02em',
+              lineHeight: 1.5,
+              marginBottom: '1.5rem',
+            }}>
+              You&apos;ll need to sign in again to access your account.
+            </p>
+
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              {/* Cancel */}
+              <button
+                onClick={() => setShowSignOutModal(false)}
+                style={{
+                  flex: 1,
+                  padding: '0.6rem 1rem',
+                  borderRadius: '10px',
+                  border: '1px solid rgba(255,255,255,0.10)',
+                  background: 'rgba(255,255,255,0.04)',
+                  color: 'var(--text-secondary)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '12px',
+                  letterSpacing: '0.04em',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s',
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.08)'
+                  e.currentTarget.style.color = 'var(--text-primary)'
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.04)'
+                  e.currentTarget.style.color = 'var(--text-secondary)'
+                }}
+              >
+                Cancel
+              </button>
+
+              {/* Confirm sign out */}
+              <button
+                onClick={signOut}
+                style={{
+                  flex: 1,
+                  padding: '0.6rem 1rem',
+                  borderRadius: '10px',
+                  border: '1px solid rgba(244,124,124,0.25)',
+                  background: 'rgba(244,124,124,0.10)',
+                  color: '#F47C7C',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '12px',
+                  letterSpacing: '0.04em',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s',
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.background = 'rgba(244,124,124,0.18)'
+                  e.currentTarget.style.borderColor = 'rgba(244,124,124,0.45)'
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = 'rgba(244,124,124,0.10)'
+                  e.currentTarget.style.borderColor = 'rgba(244,124,124,0.25)'
+                }}
+              >
+                Sign out
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -171,6 +171,15 @@ export default function ArticleView({ article }: { article: Article }) {
       .finally(() => setNewsLoading(false))
   }, [article.title])
 
+  // Fast auth prime: reads from the in-memory session cache — no network call.
+  // Prevents the "Study Together" button from briefly redirecting to /login
+  // while the slower getUser() network validation is still in flight.
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) setIsLoggedIn(true)
+    })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Record this article as read + fetch user's read history for personalisation
   useEffect(() => {
     if (recordedRef.current) return
@@ -382,6 +391,7 @@ export default function ArticleView({ article }: { article: Article }) {
 
   return (
     <div
+      className="starfield-content"
       style={{
         minHeight: '100vh',
         paddingTop: '64px',

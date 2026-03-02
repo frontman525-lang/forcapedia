@@ -1,9 +1,19 @@
 // ══════════════════════════════════════════════════════════════
 //  lib/ai.ts — Unified AI Service
-//  Architecture: Groq (primary) → Gemini (fallback 1) → DeepSeek (fallback 2)
+//
+//  Strategy: Hedged concurrency (Groq + Gemini race) → DeepSeek fallback
+//
+//  • Groq fires first (cheapest, fastest when warm).
+//  • If Groq hasn't responded after HEDGE_AFTER_MS, Gemini starts in parallel.
+//  • Whichever resolves first wins — the other is cancelled.
+//  • If both fail, DeepSeek is the last resort.
+//
+//  Why this beats sequential fallback:
+//    Sequential worst-case: 65s (Groq) + 60s (Gemini) = 125s
+//    Hedged worst-case:      8s (hedge delay) + ~8s (Gemini) = ~16s
 //
 //  All three providers expose OpenAI-compatible REST endpoints.
-//  No extra packages needed — raw fetch only.
+//  No extra packages — raw fetch only.
 //  SERVER-SIDE ONLY. Never import in client components.
 // ══════════════════════════════════════════════════════════════
 
@@ -17,6 +27,16 @@ export interface GeneratedArticle {
   content_date?: string  // e.g. "April 2024", "2020–2023", "" for timeless
 }
 
+// ─── Tuning constants ─────────────────────────────────────────
+// Fire the backup provider this many ms after the primary starts.
+// 8s means: if Groq is warm (responds in 3-8s) Gemini is NEVER called.
+// If Groq is cold (30-50s), Gemini fires at 8s and wins the race.
+const HEDGE_AFTER_MS = 8_000
+
+// Cap Wikipedia grounding text. Full Wiki articles can be 10k+ chars,
+// which blows up the context window and kills generation speed.
+const WIKI_MAX_CHARS = 4_000
+
 // ─── Provider registry ────────────────────────────────────────
 interface ProviderConfig {
   name: string
@@ -24,35 +44,40 @@ interface ProviderConfig {
   endpoint: string
   model: string
   timeoutMs: number
+  jsonMode: boolean   // false = some compat layers reject response_format:json_object
 }
 
 const PROVIDERS: ProviderConfig[] = [
   {
-    // PRIMARY — Cheapest + fastest: $0.05/$0.08 per 1M tokens, LPU hardware
-    // Normally responds in 1–3s. 45s timeout covers any Groq congestion.
+    // PRIMARY — $0.05/$0.08 per 1M tokens, LPU hardware.
+    // Responds in 3-8s when warm. Cold starts: 30-50s (hedged away by Gemini).
     name: 'groq',
     apiKeyEnv: 'GROQ_API_KEY',
     endpoint: 'https://api.groq.com/openai/v1/chat/completions',
     model: 'llama-3.1-8b-instant',
-    timeoutMs: 45_000,
+    timeoutMs: 30_000,   // 30s — cold starts are hedged by Gemini, no need for 65s
+    jsonMode: true,
   },
   {
-    // FALLBACK 1 — $0.075/$0.30 per 1M tokens
-    // Flash Lite is fast. 60s covers deep research topics.
+    // HEDGE / FALLBACK 1 — $0.075/$0.30 per 1M tokens.
+    // Gemini flash-lite responds in 3-8s. Fires as a hedge after HEDGE_AFTER_MS.
+    // jsonMode:false — Gemini's OpenAI-compat layer rejects response_format:json_object.
     name: 'gemini',
     apiKeyEnv: 'GEMINI_API_KEY',
     endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
     model: 'gemini-2.0-flash-lite',
-    timeoutMs: 60_000,
+    timeoutMs: 30_000,
+    jsonMode: false,
   },
   {
-    // FALLBACK 2 — $0.07/$1.10 per 1M tokens — last resort
-    // DeepSeek can take 20–40s on complex topics. 90s is safe ceiling.
+    // LAST RESORT — $0.28/$0.42 per 1M tokens (input cache-miss / output).
+    // Cache-hit input: $0.028/1M. Only reached if both Groq + Gemini fail.
     name: 'deepseek',
     apiKeyEnv: 'DEEPSEEK_API_KEY',
     endpoint: 'https://api.deepseek.com/v1/chat/completions',
     model: 'deepseek-chat',
     timeoutMs: 90_000,
+    jsonMode: true,
   },
 ]
 
@@ -118,7 +143,7 @@ General rules:
 async function callProvider(
   config: ProviderConfig,
   topic: string,
-  wikiContent?: string,       // optional Wikipedia plain-text to ground the article
+  wikiContent?: string,
 ): Promise<GeneratedArticle> {
   const apiKey = process.env[config.apiKeyEnv]
   if (!apiKey) throw new Error(`${config.name}: ${config.apiKeyEnv} not configured`)
@@ -146,11 +171,11 @@ async function callProvider(
         model: config.model,
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: userMessage },
+          { role: 'user',   content: userMessage },
         ],
-        max_tokens: 7000,
+        max_tokens: 4_500,   // 2000-2500 word article ≈ 3000-3500 tokens; 4500 is safe headroom
         temperature: 0.2,
-        response_format: { type: 'json_object' },
+        ...(config.jsonMode ? { response_format: { type: 'json_object' } } : {}),
       }),
       signal: controller.signal,
     })
@@ -171,8 +196,36 @@ async function callProvider(
   return parseArticleJson(raw, config.name)
 }
 
+// ─── Hedged concurrency helper ────────────────────────────────
+// Fires primary immediately. After HEDGE_AFTER_MS, fires backup in parallel.
+// Returns whichever resolves first. Fails only when both reject.
+function raceWithHedge(
+  primary: ProviderConfig,
+  backup: ProviderConfig,
+  topic: string,
+  wikiContent?: string,
+): Promise<GeneratedArticle> {
+  // Use an object so the reference is shared across closures (avoids stale-capture issue)
+  const cancel = { fn: () => {} }
+
+  const primaryPromise = callProvider(primary, topic, wikiContent)
+
+  const backupPromise = new Promise<GeneratedArticle>((resolve, reject) => {
+    const t = setTimeout(
+      () => callProvider(backup, topic, wikiContent).then(resolve, reject),
+      HEDGE_AFTER_MS,
+    )
+    cancel.fn = () => clearTimeout(t)
+  })
+
+  // If primary resolves first, cancel the pending backup timer (saves an API call)
+  primaryPromise.then(() => cancel.fn(), () => {})
+
+  // Promise.any: resolves on first success, rejects (AggregateError) only if both fail
+  return Promise.any([primaryPromise, backupPromise])
+}
+
 // ─── JSON parser with defensive extraction ───────────────────
-// Some models occasionally wrap JSON in ```json ... ``` — handle it.
 function parseArticleJson(raw: string, providerName: string): GeneratedArticle {
   let text = raw.trim()
 
@@ -182,7 +235,7 @@ function parseArticleJson(raw: string, providerName: string): GeneratedArticle {
 
   // Extract JSON object if there's surrounding noise
   const objStart = text.indexOf('{')
-  const objEnd = text.lastIndexOf('}')
+  const objEnd   = text.lastIndexOf('}')
   if (objStart !== -1 && objEnd !== -1 && objEnd > objStart) {
     text = text.slice(objStart, objEnd + 1)
   }
@@ -194,7 +247,6 @@ function parseArticleJson(raw: string, providerName: string): GeneratedArticle {
     throw new Error(`${providerName}: JSON parse failed — ${text.slice(0, 100)}`)
   }
 
-  // Validate required fields
   if (!parsed.title || !parsed.content || !parsed.summary) {
     throw new Error(`${providerName}: missing required fields (title/summary/content)`)
   }
@@ -204,7 +256,7 @@ function parseArticleJson(raw: string, providerName: string): GeneratedArticle {
     summary:      String(parsed.summary),
     content:      String(parsed.content),
     category:     String(parsed.category ?? 'Other'),
-    tags:         Array.isArray(parsed.tags) ? parsed.tags.map(String) : [],
+    tags:         Array.isArray(parsed.tags)    ? parsed.tags.map(String)    : [],
     sources:      Array.isArray(parsed.sources) ? parsed.sources.map(String) : [],
     content_date: parsed.content_date ? String(parsed.content_date) : '',
   }
@@ -213,34 +265,64 @@ function parseArticleJson(raw: string, providerName: string): GeneratedArticle {
 // ─── Public API ───────────────────────────────────────────────
 /**
  * Generate a verified knowledge article about `topic`.
- * Pass `wikiContent` to ground the AI on real Wikipedia text (recommended).
- * Without it, falls back to pure AI generation.
- * Tries Groq → Gemini → DeepSeek in order.
+ *
+ * Strategy:
+ *   Stage 1 — Groq + Gemini hedged race (fast, cheap)
+ *   Stage 2 — DeepSeek solo fallback (last resort)
+ *
+ * wikiContent is truncated to WIKI_MAX_CHARS to keep context windows small.
  * Throws only if every configured provider fails.
  */
 export async function generateArticle(
   topic: string,
   wikiContent?: string,
 ): Promise<GeneratedArticle> {
-  const errors: string[] = []
+  // Truncate wiki grounding text — full Wiki articles (10k+ chars) slow generation dramatically
+  const grounding = wikiContent?.slice(0, WIKI_MAX_CHARS)
+  const mode = grounding ? 'wiki' : 'ai'
 
-  for (const provider of PROVIDERS) {
-    if (!process.env[provider.apiKeyEnv]) continue
+  const groq     = PROVIDERS.find(p => p.name === 'groq'     && process.env[p.apiKeyEnv])
+  const gemini   = PROVIDERS.find(p => p.name === 'gemini'   && process.env[p.apiKeyEnv])
+  const deepseek = PROVIDERS.find(p => p.name === 'deepseek' && process.env[p.apiKeyEnv])
 
+  // ── Stage 1: Groq + Gemini hedged race ────────────────────────
+  if (groq && gemini) {
     const t0 = Date.now()
-    const mode = wikiContent ? 'wiki-grounded' : 'pure-ai'
     try {
-      const article = await callProvider(provider, topic, wikiContent)
-      console.log(`[ai] ✓ ${provider.name} (${mode}) — ${Date.now() - t0}ms`)
+      const article = await raceWithHedge(groq, gemini, topic, grounding)
+      console.log(`[ai] ✓ hedged (${mode}) — ${Date.now() - t0}ms`)
       return article
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error(`[ai] ✗ ${provider.name} failed (${Date.now() - t0}ms): ${msg}`)
-      errors.push(`${provider.name}: ${msg}`)
+    } catch (e) {
+      const msgs = e instanceof AggregateError
+        ? e.errors.map((err: Error) => err.message).join(' | ')
+        : String(e)
+      console.error(`[ai] ✗ groq+gemini both failed (${Date.now() - t0}ms): ${msgs}`)
+    }
+  } else {
+    // Only one of groq/gemini is configured — run solo
+    for (const provider of [groq, gemini].filter(Boolean) as ProviderConfig[]) {
+      const t0 = Date.now()
+      try {
+        const article = await callProvider(provider, topic, grounding)
+        console.log(`[ai] ✓ ${provider.name} (${mode}) — ${Date.now() - t0}ms`)
+        return article
+      } catch (err) {
+        console.error(`[ai] ✗ ${provider.name} failed (${Date.now() - t0}ms): ${err}`)
+      }
     }
   }
 
-  throw new Error(
-    `[ai] All providers failed:\n${errors.map(e => `  • ${e}`).join('\n')}`
-  )
+  // ── Stage 2: DeepSeek last resort ─────────────────────────────
+  if (deepseek) {
+    const t0 = Date.now()
+    try {
+      const article = await callProvider(deepseek, topic, grounding)
+      console.log(`[ai] ✓ deepseek (${mode}) — ${Date.now() - t0}ms`)
+      return article
+    } catch (err) {
+      console.error(`[ai] ✗ deepseek failed (${Date.now() - t0}ms): ${err}`)
+    }
+  }
+
+  throw new Error('[ai] All providers failed — check API keys and provider status')
 }

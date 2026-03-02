@@ -68,11 +68,13 @@ export default function StudyRoom({
 }: StudyRoomProps) {
   const router  = useRouter()
   const supabase = createClient()
-  const chRef   = useRef<RealtimeChannel | null>(null)
-  const articleRef = useRef<HTMLDivElement>(null)
-  const chatBottomRef = useRef<HTMLDivElement>(null)
-  const lastScrollBcast = useRef(0)
-  const msgTsRef = useRef<number[]>([])
+  const chRef              = useRef<RealtimeChannel | null>(null)
+  const articleRef         = useRef<HTMLDivElement>(null)
+  const articleContainerRef = useRef<HTMLDivElement>(null)   // the scrollable article wrapper
+  const isFollowingRef     = useRef(true)                    // mirror of isFollowing — avoids stale closures
+  const chatBottomRef      = useRef<HTMLDivElement>(null)
+  const lastScrollBcast    = useRef(0)
+  const msgTsRef           = useRef<number[]>([])
 
   const [members,         setMembers]         = useState<Member[]>(initialMembers)
   const [messages,        setMessages]        = useState<ChatMessage[]>(initialMessages)
@@ -92,6 +94,8 @@ export default function StudyRoom({
   const [searchQ,         setSearchQ]         = useState('')
   const [searchResults,   setSearchResults]   = useState<SearchResult[]>([])
   const [searchLoading,   setSearchLoading]   = useState(false)
+  const [generating,      setGenerating]      = useState(false)
+  const [generateError,   setGenerateError]   = useState('')
   const [isMobile,        setIsMobile]        = useState(false)
   const [selection,       setSelection]       = useState<{ text: string; x: number; y: number } | null>(null)
   const [explainLoading,  setExplainLoading]  = useState(false)
@@ -120,9 +124,11 @@ export default function StudyRoom({
         setMembers(prev => prev.map(m => ({ ...m, _online: online.has(m.user_id) } as Member)))
       })
       .on('broadcast', { event: 'scroll' }, ({ payload }) => {
-        if (!isFollowing || currentUser.isHost) return
-        const { scrollHeight, clientHeight } = document.documentElement
-        window.scrollTo({ top: payload.pct * (scrollHeight - clientHeight), behavior: 'smooth' })
+        if (!isFollowingRef.current || currentUser.isHost) return
+        const container = articleContainerRef.current
+        if (!container) return
+        const { scrollHeight, clientHeight } = container
+        container.scrollTo({ top: payload.pct * (scrollHeight - clientHeight), behavior: 'smooth' })
       })
       .on('broadcast', { event: 'message' }, ({ payload }) => {
         setMessages(prev => [...prev.slice(-19), payload as ChatMessage])
@@ -191,28 +197,31 @@ export default function StudyRoom({
   // ── Scroll sync (host → members) ──────────────────────────────────────────
   useEffect(() => {
     if (!currentUser.isHost) return
+    const container = articleContainerRef.current
+    if (!container) return
     const onScroll = () => {
       const now = Date.now()
       if (now - lastScrollBcast.current < 200) return
       lastScrollBcast.current = now
-      const { scrollTop, scrollHeight, clientHeight } = document.documentElement
+      const { scrollTop, scrollHeight, clientHeight } = container
       chRef.current?.send({ type: 'broadcast', event: 'scroll',
         payload: { pct: scrollHeight <= clientHeight ? 0 : scrollTop / (scrollHeight - clientHeight) } })
     }
-    window.addEventListener('scroll', onScroll, { passive: true })
-    return () => window.removeEventListener('scroll', onScroll)
+    container.addEventListener('scroll', onScroll, { passive: true })
+    return () => container.removeEventListener('scroll', onScroll)
   }, [currentUser.isHost])
 
   // ── Member scroll → disable follow ────────────────────────────────────────
   useEffect(() => {
     if (currentUser.isHost) return
-    let timeout: ReturnType<typeof setTimeout> | undefined
+    const container = articleContainerRef.current
+    if (!container) return
     const onScroll = () => {
+      isFollowingRef.current = false
       setIsFollowing(false)
-      clearTimeout(timeout)
     }
-    window.addEventListener('scroll', onScroll, { passive: true })
-    return () => { window.removeEventListener('scroll', onScroll); clearTimeout(timeout) }
+    container.addEventListener('scroll', onScroll, { passive: true })
+    return () => container.removeEventListener('scroll', onScroll)
   }, [currentUser.isHost])
 
   // ── Text selection → highlight toolbar ────────────────────────────────────
@@ -224,9 +233,11 @@ export default function StudyRoom({
       const r = sel.getRangeAt(0).getBoundingClientRect()
       setSelection({ text: sel.toString().trim(), x: r.left + r.width / 2, y: r.top - 8 })
     }
+    // touchend fires before the selection is finalised on iOS/Android — add a short delay
+    const onTouchEnd = () => setTimeout(onMouseUp, 50)
     document.addEventListener('mouseup', onMouseUp)
-    document.addEventListener('touchend', onMouseUp)
-    return () => { document.removeEventListener('mouseup', onMouseUp); document.removeEventListener('touchend', onMouseUp) }
+    document.addEventListener('touchend', onTouchEnd)
+    return () => { document.removeEventListener('mouseup', onMouseUp); document.removeEventListener('touchend', onTouchEnd) }
   }, [currentUser.isObserver])
 
   // ── Cleanup on leave/unmount ───────────────────────────────────────────────
@@ -252,7 +263,7 @@ export default function StudyRoom({
         const data = await res.json()
         setArticle(data)
         setNavHistory(prev => [...prev, { id: Date.now().toString(), article_slug: slug, article_title: data.title, navigated_at: new Date().toISOString() }])
-        window.scrollTo({ top: 0, behavior: 'smooth' })
+        articleContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
       }
     } catch { /* ignore */ }
   }
@@ -335,6 +346,57 @@ export default function StudyRoom({
       setSearchResults(data.results ?? [])
     }
     setSearchLoading(false)
+  }
+
+  // Generate a brand-new article (via the same pipeline as the main search page)
+  // then load it in the room and broadcast to all members.
+  async function generateAndNavigate(query: string) {
+    setGenerating(true)
+    setGenerateError('')
+    try {
+      const res = await fetch('/api/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        setGenerateError(body.error ?? 'Failed to generate article.')
+        return
+      }
+      const { slug } = await res.json()
+
+      // Fetch the newly generated article to get its real title
+      const ar = await fetch(`/api/article?slug=${encodeURIComponent(slug)}`)
+      if (!ar.ok) { setGenerateError('Could not load article after generation.'); return }
+      const artData = await ar.json()
+
+      // Load in room UI
+      setArticle(artData)
+      setNavHistory(prev => [...prev, {
+        id: Date.now().toString(),
+        article_slug: artData.slug,
+        article_title: artData.title,
+        navigated_at: new Date().toISOString(),
+      }])
+      articleContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
+
+      // Record + broadcast navigation
+      await fetch(`/api/rooms/${roomCode}/navigate`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ articleSlug: artData.slug, articleTitle: artData.title }),
+      })
+      chRef.current?.send({ type: 'broadcast', event: 'navigate',
+        payload: { slug: artData.slug, title: artData.title } })
+
+      setSearchOpen(false)
+      setSearchQ('')
+      setSearchResults([])
+    } catch {
+      setGenerateError('Network error. Please try again.')
+    } finally {
+      setGenerating(false)
+    }
   }
 
   async function hostNavigateTo(slug: string, title: string) {
@@ -437,7 +499,7 @@ export default function StudyRoom({
 
         {/* Host search bar */}
         {currentUser.isHost && (
-          <button onClick={() => setSearchOpen(true)} style={{
+          <button onClick={() => { setSearchOpen(true); setSearchQ(''); setSearchResults([]); setGenerateError('') }} style={{
             flex: 1, maxWidth: 280, height: 28, background: 'rgba(255,255,255,0.05)',
             border: '1px solid rgba(255,255,255,0.08)', borderRadius: '6px',
             color: 'rgba(240,237,232,0.35)', fontSize: '12px', cursor: 'text',
@@ -483,20 +545,22 @@ export default function StudyRoom({
           </span>
         )}
 
-        {/* Reactions bar */}
-        <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
-          {REACTIONS.map(e => (
-            <button key={e} onClick={() => !currentUser.isObserver && sendReaction(e)} style={{
-              background: 'none', border: 'none', cursor: currentUser.isObserver ? 'default' : 'pointer',
-              fontSize: '14px', padding: '2px 4px', opacity: currentUser.isObserver ? 0.3 : 1,
-              transition: 'transform 0.1s',
-            }}
-            onMouseEnter={e_ => { if (!currentUser.isObserver) e_.currentTarget.style.transform = 'scale(1.3)' }}
-            onMouseLeave={e_ => { e_.currentTarget.style.transform = 'scale(1)' }}>
-              {e}
-            </button>
-          ))}
-        </div>
+        {/* Reactions bar — desktop only (mobile gets them in the chat panel) */}
+        {!isMobile && (
+          <div style={{ display: 'flex', gap: '2px', flexShrink: 0 }}>
+            {REACTIONS.map(e => (
+              <button key={e} onClick={() => !currentUser.isObserver && sendReaction(e)} style={{
+                background: 'none', border: 'none', cursor: currentUser.isObserver ? 'default' : 'pointer',
+                fontSize: '14px', padding: '2px 4px', opacity: currentUser.isObserver ? 0.3 : 1,
+                transition: 'transform 0.1s',
+              }}
+              onMouseEnter={e_ => { if (!currentUser.isObserver) e_.currentTarget.style.transform = 'scale(1.3)' }}
+              onMouseLeave={e_ => { e_.currentTarget.style.transform = 'scale(1)' }}>
+                {e}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Chat toggle */}
         <button onClick={() => setChatOpen(o => !o)} style={{
@@ -560,11 +624,17 @@ export default function StudyRoom({
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
 
         {/* Article area */}
-        <div style={{
-          flex: 1, overflowY: 'auto', padding: isMobile ? '1.5rem 1rem' : '2rem 1.5rem',
-          maxWidth: chatOpen && !isMobile ? 'calc(100% - 320px)' : '100%',
-          transition: 'max-width 0.2s',
-        }}>
+        <div
+          ref={articleContainerRef}
+          style={{
+            flex: 1, overflowY: 'auto',
+            padding: isMobile
+              ? `1.5rem 1rem ${chatOpen ? '320px' : '1.5rem'}`
+              : '2rem 1.5rem',
+            maxWidth: chatOpen && !isMobile ? 'calc(100% - 320px)' : '100%',
+            transition: 'max-width 0.2s',
+          }}
+        >
           <div style={{ maxWidth: 720, margin: '0 auto' }}>
 
             {/* Article header */}
@@ -609,7 +679,7 @@ export default function StudyRoom({
             {/* Follow host button */}
             {!currentUser.isHost && !isFollowing && (
               <button
-                onClick={() => setIsFollowing(true)}
+                onClick={() => { isFollowingRef.current = true; setIsFollowing(true) }}
                 style={{
                   position: 'fixed', bottom: isMobile ? 80 : 24, left: '50%', transform: 'translateX(-50%)',
                   background: 'rgba(22,20,18,0.95)', border: '1px solid rgba(201,169,110,0.3)',
@@ -658,6 +728,27 @@ export default function StudyRoom({
                 </div>
               ))}
             </div>
+
+            {/* Reactions row — mobile only */}
+            {isMobile && !currentUser.isObserver && (
+              <div style={{
+                padding: '0.35rem 0.75rem',
+                borderBottom: '1px solid rgba(255,255,255,0.05)',
+                display: 'flex', gap: '4px', justifyContent: 'center',
+              }}>
+                {REACTIONS.map(e => (
+                  <button key={e} onClick={() => sendReaction(e)} style={{
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    fontSize: '18px', padding: '4px 10px',
+                    transition: 'transform 0.1s',
+                  }}
+                  onMouseEnter={e_ => { e_.currentTarget.style.transform = 'scale(1.3)' }}
+                  onMouseLeave={e_ => { e_.currentTarget.style.transform = 'scale(1)' }}>
+                    {e}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Messages */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '0.5rem 0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
@@ -828,7 +919,7 @@ export default function StudyRoom({
         <div style={{
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 400,
           display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: '10vh',
-        }} onClick={e => { if (e.target === e.currentTarget) setSearchOpen(false) }}>
+        }} onClick={e => { if (e.target === e.currentTarget && !generating) setSearchOpen(false) }}>
           <div style={{
             background: '#1E1C1A', border: '1px solid rgba(255,255,255,0.1)',
             borderRadius: '16px', width: 'min(520px, 90vw)', overflow: 'hidden',
@@ -838,18 +929,45 @@ export default function StudyRoom({
               <input
                 autoFocus
                 value={searchQ}
-                onChange={e => { setSearchQ(e.target.value); searchArticles(e.target.value) }}
-                placeholder="Search for an article…"
+                onChange={e => {
+                  setSearchQ(e.target.value)
+                  setGenerateError('')
+                  searchArticles(e.target.value)
+                }}
+                disabled={generating}
+                placeholder="Search or type any topic to generate…"
                 style={{
                   width: '100%', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
                   borderRadius: '8px', color: '#F0EDE8', fontSize: '14px', padding: '0.6rem 0.8rem',
                   outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box',
+                  opacity: generating ? 0.5 : 1,
                 }}
               />
             </div>
-            <div style={{ maxHeight: 320, overflowY: 'auto' }}>
-              {searchLoading && <p style={{ padding: '1rem', fontSize: '13px', color: 'rgba(240,237,232,0.4)', textAlign: 'center' }}>Searching…</p>}
-              {searchResults.map(r => (
+            <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+
+              {/* Generating overlay */}
+              {generating && (
+                <div style={{ padding: '1.5rem', textAlign: 'center' }}>
+                  <div className="fp-dots" style={{ justifyContent: 'center', marginBottom: '0.75rem' }}>
+                    <span className="fp-dot" />
+                    <span className="fp-dot" />
+                    <span className="fp-dot" />
+                  </div>
+                  <p style={{ fontSize: '13px', color: 'rgba(240,237,232,0.5)' }}>
+                    Generating article about <strong style={{ color: '#C9A96E' }}>{searchQ}</strong>…
+                  </p>
+                  <p style={{ fontSize: '11px', color: 'rgba(240,237,232,0.25)', marginTop: '0.35rem' }}>
+                    This may take 10–30 seconds
+                  </p>
+                </div>
+              )}
+
+              {/* Search results */}
+              {!generating && searchLoading && (
+                <p style={{ padding: '1rem', fontSize: '13px', color: 'rgba(240,237,232,0.4)', textAlign: 'center' }}>Searching…</p>
+              )}
+              {!generating && searchResults.map(r => (
                 <button key={r.slug} onClick={() => hostNavigateTo(r.slug, r.title)} style={{
                   width: '100%', background: 'none', border: 'none', borderBottom: '1px solid rgba(255,255,255,0.04)',
                   padding: '0.75rem 1rem', cursor: 'pointer', textAlign: 'left', transition: 'background 0.15s',
@@ -860,8 +978,32 @@ export default function StudyRoom({
                   <p style={{ fontSize: '14px', color: '#F0EDE8' }}>{r.title}</p>
                 </button>
               ))}
-              {!searchLoading && searchQ && searchResults.length === 0 && (
-                <p style={{ padding: '1rem', fontSize: '13px', color: 'rgba(240,237,232,0.35)', textAlign: 'center' }}>No results for "{searchQ}"</p>
+
+              {/* No results → offer to generate */}
+              {!generating && !searchLoading && searchQ && searchResults.length === 0 && (
+                <div style={{ padding: '1rem 1rem 1.25rem', textAlign: 'center' }}>
+                  <p style={{ fontSize: '12px', color: 'rgba(240,237,232,0.3)', marginBottom: '0.85rem' }}>
+                    No cached article found
+                  </p>
+                  {generateError && (
+                    <p style={{ fontSize: '12px', color: '#F47C7C', marginBottom: '0.6rem' }}>{generateError}</p>
+                  )}
+                  <button
+                    onClick={() => generateAndNavigate(searchQ)}
+                    style={{
+                      background: 'rgba(201,169,110,0.12)',
+                      border: '1px solid rgba(201,169,110,0.3)',
+                      borderRadius: '10px', color: '#C9A96E',
+                      fontSize: '13px', padding: '0.6rem 1.25rem',
+                      cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
+                      transition: 'background 0.15s',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'rgba(201,169,110,0.2)' }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'rgba(201,169,110,0.12)' }}
+                  >
+                    ✦ Generate &ldquo;{searchQ}&rdquo;
+                  </button>
+                </div>
               )}
             </div>
           </div>
