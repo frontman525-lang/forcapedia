@@ -46,9 +46,12 @@ export default async function PricingPage({ searchParams }: Props) {
         .limit(1)
         .single(),
     ])
+    
     currentTier         = usage?.tier ?? 'free'
     currentBillingCycle = (activeSub?.billing_cycle as 'monthly' | 'yearly' | undefined) ?? null
   }
+
+
 
   return (
     <>
