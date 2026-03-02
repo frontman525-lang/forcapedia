@@ -338,15 +338,13 @@ Email: hello@forcapedia.com
   zip.file('README.txt',  readme)
 
   const zipBuffer = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' })
-  // Slice creates a true ArrayBuffer (not SharedArrayBuffer) — required by BlobPart typing
-  const blob = new Blob(
-    [zipBuffer.buffer.slice(zipBuffer.byteOffset, zipBuffer.byteOffset + zipBuffer.byteLength)],
-    { type: 'application/zip' },
-  )
+  const body = new ArrayBuffer(zipBuffer.byteLength)
+  new Uint8Array(body).set(zipBuffer)
 
   const filename = `forcapedia-data-${dateSlug}.zip`
-  return new NextResponse(blob, {
+  return new NextResponse(body, {
     headers: {
+      'Content-Type': 'application/zip',
       'Content-Disposition': `attachment; filename="${filename}"`,
     },
   })
