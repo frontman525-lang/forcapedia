@@ -338,13 +338,12 @@ Email: hello@forcapedia.com
   zip.file('README.txt',  readme)
 
   const zipBuffer = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' })
+  const blob = new Blob([zipBuffer], { type: 'application/zip' })
 
   const filename = `forcapedia-data-${dateSlug}.zip`
-  return new NextResponse(zipBuffer, {
+  return new NextResponse(blob, {
     headers: {
-      'Content-Type':        'application/zip',
       'Content-Disposition': `attachment; filename="${filename}"`,
-      'Content-Length':      String(zipBuffer.length),
     },
   })
 }
