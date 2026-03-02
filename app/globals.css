@@ -138,6 +138,10 @@
   0%, 100% { opacity: 0.6; }
   50%       { opacity: 1; }
 }
+/* Spinner for loading states */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
 
 /* ─── SHADOW / UI TOKENS (theme-aware) ──────────── */
 :root {
@@ -271,6 +275,7 @@ body::before {
   touch-action: pan-y;
   -webkit-user-select: text;
   user-select: text;
+  -webkit-touch-callout: none; /* suppress iOS long-press callout (links/images) */
 }
 
 .article-prose h2 {

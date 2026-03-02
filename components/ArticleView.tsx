@@ -7,6 +7,7 @@ import { createClient } from '@/lib/supabase/client'
 import type { NewsItem } from '@/types/news'
 import ExplainPanel from './ExplainPanel'
 import HelpfulButton from './HelpfulButton'
+import WikiInfoBox from './WikiInfoBox'
 
 interface Article {
   id: string
@@ -134,6 +135,7 @@ export default function ArticleView({ article }: { article: Article }) {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [readSlugs, setReadSlugs] = useState<Set<string>>(new Set())
   const [doubtTooltip, setDoubtTooltip] = useState(false)
+  const [doubtPressed, setDoubtPressed] = useState(false)
   const [articleCopied, setArticleCopied] = useState(false)
   const [studyMode, setStudyMode] = useState<'solo' | 'together'>('solo')
   const [studyCreating, setStudyCreating] = useState(false)
@@ -298,13 +300,13 @@ export default function ArticleView({ article }: { article: Article }) {
     }
   }, [tocItems])
 
-  // Auto-scroll active TOC button into view inside the sidebar
+  // Auto-scroll active TOC button into view inside the sidebar (desktop only)
   useEffect(() => {
-    if (!activeSectionId) return
+    if (!activeSectionId || !isDesktopLayout) return
     const target = tocButtonRefs.current[activeSectionId]
     if (!target) return
     target.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-  }, [activeSectionId])
+  }, [activeSectionId, isDesktopLayout])
 
   // Close study modal on Escape
   useEffect(() => {
@@ -515,10 +517,17 @@ export default function ArticleView({ article }: { article: Article }) {
                   background: 'var(--gold-dim)', border: '1px solid var(--border-gold)', borderRadius: '14px',
                   color: 'var(--gold)', fontFamily: 'var(--font-mono)', fontSize: '12px', letterSpacing: '0.08em',
                   cursor: studyCreating ? 'default' : 'pointer',
-                  opacity: studyCreating ? 0.7 : 1, transition: 'all 0.15s',
+                  transition: 'opacity 0.15s',
                 }}
               >
-                {studyCreating ? 'Creating room…' : '+ Create Room'}
+                {studyCreating ? (
+                  <>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ animation: 'spin 0.75s linear infinite', flexShrink: 0 }}>
+                      <path d="M12 2a10 10 0 0 1 10 10" />
+                    </svg>
+                    Creating…
+                  </>
+                ) : '+ Create Room'}
               </button>
             )}
 
@@ -641,28 +650,6 @@ export default function ArticleView({ article }: { article: Article }) {
               })}
             </nav>
 
-            {/* Active pill at bottom of sidebar */}
-            <div style={{ marginTop: '1.5rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)' }}>
-              <div
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.38rem',
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: '10px',
-                  letterSpacing: '0.08em',
-                  color: 'rgba(134,239,172,0.85)',
-                  background: 'rgba(34,197,94,0.07)',
-                  border: '1px solid rgba(34,197,94,0.22)',
-                  padding: '3px 10px',
-                  borderRadius: '100px',
-                  animation: 'activePillGlow 3.5s ease-in-out infinite',
-                }}
-              >
-                <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#22c55e', display: 'inline-block', flexShrink: 0, boxShadow: '0 0 4px rgba(34,197,94,0.6)' }} />
-                Active
-              </div>
-            </div>
           </aside>
         )}
 
@@ -700,46 +687,6 @@ export default function ArticleView({ article }: { article: Article }) {
             </span>
           </div>
 
-          {/* Mobile TOC pills */}
-          {showMobileToc && (
-            <div
-              className="article-toc-mobile"
-              style={{
-                display: 'flex',
-                gap: '0.45rem',
-                overflowX: 'auto',
-                paddingBottom: '0.75rem',
-                marginBottom: '1rem',
-                scrollbarWidth: 'none',
-              }}
-            >
-              {tocItems.map(item => (
-                <button
-                  key={`mobile-${item.id}`}
-                  ref={node => { tocButtonRefs.current[item.id] = node }}
-                  type="button"
-                  onClick={() => scrollToSection(item.id)}
-                  style={{
-                    flexShrink: 0,
-                    border: '1px solid',
-                    borderColor: item.id === activeSectionId ? 'var(--border-gold)' : 'var(--border)',
-                    background: item.id === activeSectionId ? 'var(--gold-dim)' : 'rgba(255,255,255,0.02)',
-                    color: item.id === activeSectionId ? 'var(--gold)' : 'var(--text-secondary)',
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: '10px',
-                    letterSpacing: '0.06em',
-                    textTransform: 'uppercase',
-                    borderRadius: '999px',
-                    padding: '0.35rem 0.65rem',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s',
-                  }}
-                >
-                  {item.text}
-                </button>
-              ))}
-            </div>
-          )}
 
           {/* Badges row — Verified · date | "? Doubt" | Active | [share button] */}
           <div
@@ -787,34 +734,36 @@ export default function ArticleView({ article }: { article: Article }) {
             <div
               style={{ position: 'relative', display: 'inline-flex' }}
               onMouseEnter={() => setDoubtTooltip(true)}
-              onMouseLeave={() => setDoubtTooltip(false)}
+              onMouseLeave={() => { setDoubtTooltip(false); setDoubtPressed(false) }}
             >
-              <div style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.35rem',
-                padding: '4px 11px',
-                borderRadius: '100px',
-                border: doubtTooltip
-                  ? '1px solid rgba(240,237,232,0.16)'
-                  : '1px solid var(--border)',
-                background: doubtTooltip
-                  ? 'rgba(255,255,255,0.07)'
-                  : 'rgba(255,255,255,0.02)',
-                fontFamily: 'var(--font-mono)',
-                fontSize: '10px',
-                letterSpacing: '0.08em',
-                color: doubtTooltip ? 'var(--text-secondary)' : 'var(--text-tertiary)',
-                cursor: 'default',
-                userSelect: 'none',
-                transform: doubtTooltip ? 'scale(1.05)' : 'scale(1)',
-                transition: 'all 0.22s cubic-bezier(0.34, 1.56, 0.64, 1)',
-                animation: doubtTooltip ? 'none' : 'doubtBreathe 3.5s ease-in-out infinite',
-              }}>
-                <span style={{
-                  opacity: doubtTooltip ? 1 : 0.7,
-                  transition: 'opacity 0.2s',
-                }}>?</span>
+              <div
+                onMouseDown={() => setDoubtPressed(true)}
+                onMouseUp={() => setDoubtPressed(false)}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  padding: '4px 11px',
+                  borderRadius: '100px',
+                  border: doubtTooltip
+                    ? '1px solid rgba(240,237,232,0.16)'
+                    : '1px solid var(--border)',
+                  background: doubtPressed
+                    ? 'rgba(201,169,110,0.1)'
+                    : doubtTooltip
+                    ? 'rgba(255,255,255,0.07)'
+                    : 'rgba(255,255,255,0.02)',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '10px',
+                  letterSpacing: '0.08em',
+                  color: doubtPressed ? 'var(--gold)' : doubtTooltip ? 'var(--text-secondary)' : 'var(--text-tertiary)',
+                  cursor: 'default',
+                  userSelect: 'none',
+                  transform: doubtPressed ? 'scale(0.94)' : doubtTooltip ? 'scale(1.05)' : 'scale(1)',
+                  transition: 'all 0.18s cubic-bezier(0.34, 1.56, 0.64, 1)',
+                  animation: doubtTooltip || doubtPressed ? 'none' : 'doubtBreathe 4s ease-in-out infinite',
+                }}>
+                <span style={{ opacity: doubtTooltip ? 1 : 0.7, transition: 'opacity 0.2s' }}>?</span>
                 {' '}Doubt
               </div>
               {doubtTooltip && (
@@ -840,35 +789,12 @@ export default function ArticleView({ article }: { article: Article }) {
               )}
             </div>
 
-            {/* Active pill (mobile only — desktop shows in sidebar) */}
-            {!isDesktopLayout && (
-              <div
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.38rem',
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: '10px',
-                  letterSpacing: '0.1em',
-                  color: 'rgba(134,239,172,0.85)',
-                  background: 'rgba(34,197,94,0.07)',
-                  border: '1px solid rgba(34,197,94,0.22)',
-                  padding: '4px 10px',
-                  borderRadius: '100px',
-                  animation: 'activePillGlow 3.5s ease-in-out infinite',
-                }}
-              >
-                <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#22c55e', display: 'inline-block', flexShrink: 0, boxShadow: '0 0 4px rgba(34,197,94,0.6)' }} />
-                Active
-              </div>
-            )}
           </div>{/* /left pills */}
 
-          {/* Share article button — top right */}
+          {/* Share article — icon-only, aligned with pills */}
           <button
             onClick={async () => {
               const url = window.location.href
-              const shareText = `${article.title} — ${url}`
               if (navigator.share) {
                 await navigator.share({ title: article.title, url }).catch(() => null)
               } else {
@@ -877,47 +803,47 @@ export default function ArticleView({ article }: { article: Article }) {
                 setTimeout(() => setArticleCopied(false), 2000)
               }
             }}
-            title="Share article"
+            title={articleCopied ? 'Link copied!' : 'Share article'}
             style={{
               flexShrink: 0,
               display: 'inline-flex',
               alignItems: 'center',
-              gap: '0.35rem',
-              padding: '5px 12px',
-              border: '1px solid var(--border)',
-              borderRadius: '100px',
+              justifyContent: 'center',
+              width: 28,
+              height: 28,
+              border: articleCopied ? '1px solid rgba(34,197,94,0.4)' : '1px solid var(--border)',
+              borderRadius: '50%',
               background: articleCopied ? 'rgba(34,197,94,0.08)' : 'transparent',
-              borderColor: articleCopied ? 'rgba(34,197,94,0.4)' : 'var(--border)',
               color: articleCopied ? '#22c55e' : 'var(--text-tertiary)',
-              fontFamily: 'var(--font-mono)',
-              fontSize: '10px',
-              letterSpacing: '0.06em',
               cursor: 'pointer',
               transition: 'all 0.15s',
             }}
             onMouseEnter={e => {
               if (!articleCopied) {
-                e.currentTarget.style.borderColor = 'var(--border-gold)'
-                e.currentTarget.style.color = 'var(--gold)'
+                e.currentTarget.style.background = 'rgba(255,255,255,0.06)'
+                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'
+                e.currentTarget.style.color = 'var(--text-secondary)'
               }
             }}
             onMouseLeave={e => {
               if (!articleCopied) {
+                e.currentTarget.style.background = 'transparent'
                 e.currentTarget.style.borderColor = 'var(--border)'
                 e.currentTarget.style.color = 'var(--text-tertiary)'
               }
             }}
+            onMouseDown={e => { e.currentTarget.style.transform = 'scale(0.92)' }}
+            onMouseUp={e => { e.currentTarget.style.transform = 'scale(1)' }}
           >
             {articleCopied ? (
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
             ) : (
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13" />
               </svg>
             )}
-            {articleCopied ? 'Copied!' : 'Share'}
           </button>
           </div>{/* /badges row */}
 
@@ -951,34 +877,8 @@ export default function ArticleView({ article }: { article: Article }) {
             {article.summary}
           </p>
 
-          {/* Tags */}
-          {article.tags?.length > 0 && (
-            <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                gap: '0.4rem',
-                marginBottom: '2.5rem',
-              }}
-            >
-              {article.tags.map(tag => (
-                <span
-                  key={tag}
-                  style={{
-                    padding: '3px 10px',
-                    borderRadius: '100px',
-                    border: '1px solid var(--border)',
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: '11px',
-                    color: 'var(--text-tertiary)',
-                    letterSpacing: '0.06em',
-                  }}
-                >
-                  {tag}
-                </span>
-              ))}
-            </div>
-          )}
+          {/* Wikipedia info box — person / species / notable entity */}
+          <WikiInfoBox wikiUrl={article.wiki_url} articleTitle={article.title} />
 
           {/* Article body */}
           {isDesktopLayout ? (
