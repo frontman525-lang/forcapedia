@@ -360,6 +360,54 @@ html.light .article-prose p.formula-block code {
   color: var(--gold);
 }
 
+/* ─── WIKI INFO BOX ──────────────────────────────── */
+.wiki-info-box {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-bottom: 2rem;
+  overflow-anchor: none;
+}
+
+.wiki-portrait {
+  flex: 0 0 140px;
+}
+
+.wiki-portrait img {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  object-position: top center;
+  border-radius: 14px;
+  display: block;
+}
+
+.wiki-info-panel {
+  flex: 1 1 200px;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1rem 1.125rem;
+}
+
+@media (max-width: 600px) {
+  .wiki-info-box {
+    flex-direction: column;
+  }
+  .wiki-portrait {
+    flex: 0 0 auto;
+    width: 100%;
+  }
+  .wiki-portrait img {
+    aspect-ratio: 4 / 3; /* landscape crop on mobile — less tall, fits screen better */
+    border-radius: 12px;
+  }
+  .wiki-info-panel {
+    width: 100%;
+  }
+}
+
 /* Article layout: single column by default, sticky TOC on desktop */
 .article-layout {
   max-width: 760px;

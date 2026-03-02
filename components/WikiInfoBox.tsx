@@ -16,20 +16,18 @@ interface WikiInfoBoxProps {
   articleTitle: string
 }
 
-/** Parse up to 3 key/value lines from a Wikipedia extract. */
-function parseMetaRows(extract: string): { label: string; value: string }[] {
-  const rows: { label: string; value: string }[] = []
+interface MetaRow { label: string; value: string }
 
-  // Born: look for "born [date]" or "born on [date]"
+function parseMetaRows(extract: string): MetaRow[] {
+  const rows: MetaRow[] = []
+
   const bornMatch = extract.match(/born\s+(?:on\s+)?([A-Z][a-z]+ \d{1,2},? \d{4}|\d{1,2} [A-Z][a-z]+ \d{4})/i)
   if (bornMatch) rows.push({ label: 'Born', value: bornMatch[1] })
 
-  // Died
   const diedMatch = extract.match(/died\s+(?:on\s+)?([A-Z][a-z]+ \d{1,2},? \d{4}|\d{1,2} [A-Z][a-z]+ \d{4})/i)
   if (diedMatch) rows.push({ label: 'Died', value: diedMatch[1] })
 
-  // Nationality
-  const natMatch = extract.match(/\b(American|British|French|German|Iranian|Chinese|Indian|Russian|Japanese|Italian|Spanish|Australian|Brazilian|Canadian)\b/)
+  const natMatch = extract.match(/\b(American|British|French|German|Iranian|Chinese|Indian|Russian|Japanese|Italian|Spanish|Australian|Brazilian|Canadian|Pakistani|Egyptian|Saudi|Turkish|Korean|Nigerian|South African|Dutch|Swedish|Norwegian|Danish|Finnish|Swiss|Austrian|Polish|Czech|Hungarian|Romanian|Greek|Portuguese|Belgian|Israeli|Singaporean|Thai|Vietnamese|Indonesian|Bangladeshi|Sri Lankan)\b/)
   if (natMatch) rows.push({ label: 'Nationality', value: natMatch[1] })
 
   return rows.slice(0, 3)
@@ -61,43 +59,30 @@ export default function WikiInfoBox({ wikiUrl, articleTitle }: WikiInfoBoxProps)
   const metaRows = data.extract ? parseMetaRows(data.extract) : []
   const imgSrc = data.originalimage?.source ?? data.thumbnail.source
 
+  // First sentence as short summary fallback
+  const firstSentence = data.extract?.match(/[^.!?]+[.!?]+/)?.[0]?.trim() ?? ''
+
   return (
-    <div
-      className="wiki-info-box"
-      style={{
-        marginBottom: '2rem',
-        border: '1px solid var(--border)',
-        borderRadius: '16px',
-        overflow: 'hidden',
-        background: 'rgba(255,255,255,0.02)',
-      }}
-    >
-      {/* Full-width image */}
-      <div style={{ width: '100%', height: 280, overflow: 'hidden', background: 'rgba(255,255,255,0.04)' }}>
+    <div className="wiki-info-box">
+      {/* ── Portrait ── */}
+      <div className="wiki-portrait">
         <img
           src={imgSrc}
           alt={data.title}
           onError={() => setImgError(true)}
-          style={{
-            width: '100%',
-            height: '100%',
-            objectFit: 'cover',
-            objectPosition: 'top center',
-            display: 'block',
-          }}
         />
       </div>
 
-      {/* Info section below image */}
-      <div style={{ padding: '0.875rem 1.125rem 1rem' }}>
+      {/* ── Info panel ── */}
+      <div className="wiki-info-panel">
         {/* Name */}
         <p style={{
           fontFamily: 'var(--font-serif)',
-          fontSize: '1rem',
+          fontSize: '1.1rem',
           fontWeight: 400,
           color: 'var(--text-primary)',
+          lineHeight: 1.25,
           marginBottom: '0.2rem',
-          lineHeight: 1.3,
         }}>
           {data.title}
         </p>
@@ -110,36 +95,56 @@ export default function WikiInfoBox({ wikiUrl, articleTitle }: WikiInfoBoxProps)
             letterSpacing: '0.07em',
             textTransform: 'uppercase',
             color: 'var(--gold)',
-            marginBottom: metaRows.length > 0 ? '0.75rem' : '0.625rem',
+            marginBottom: '0.75rem',
+            lineHeight: 1.4,
           }}>
             {data.description}
           </p>
         )}
 
+        {/* Divider */}
+        <div style={{ height: '1px', background: 'var(--border)', marginBottom: '0.625rem' }} />
+
         {/* Metadata rows */}
-        {metaRows.length > 0 && (
-          <div style={{
-            borderTop: '1px solid var(--border)',
-            paddingTop: '0.625rem',
-            marginBottom: '0.625rem',
-            display: 'grid',
-            gridTemplateColumns: 'auto 1fr',
-            columnGap: '1rem',
-            rowGap: '0.3rem',
-          }}>
+        {metaRows.length > 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', marginBottom: '0.75rem' }}>
             {metaRows.map(row => (
-              <>
-                <span key={`l-${row.label}`} style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-tertiary)', letterSpacing: '0.05em', whiteSpace: 'nowrap', alignSelf: 'center' }}>
+              <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '0.5rem' }}>
+                <span style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '10px',
+                  color: 'var(--text-tertiary)',
+                  letterSpacing: '0.05em',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0,
+                }}>
                   {row.label}
                 </span>
-                <span key={`v-${row.label}`} style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-secondary)', letterSpacing: '0.04em', alignSelf: 'center' }}>
+                <span style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '10px',
+                  color: 'var(--text-secondary)',
+                  letterSpacing: '0.03em',
+                  textAlign: 'right',
+                }}>
                   {row.value}
                 </span>
-              </>
+              </div>
             ))}
           </div>
-        )}
+        ) : firstSentence ? (
+          <p style={{
+            fontSize: '12px',
+            color: 'var(--text-secondary)',
+            lineHeight: 1.6,
+            fontWeight: 300,
+            marginBottom: '0.75rem',
+          }}>
+            {firstSentence}
+          </p>
+        ) : null}
 
+        {/* Wikipedia link */}
         <a
           href={`https://en.wikipedia.org/wiki/${encodeURIComponent(data.title)}`}
           target="_blank"
