@@ -13,6 +13,7 @@ create policy "usage_select_own"
 
 
 
+
 create or replace function public.increment_token_usage(
   p_user_id    uuid,
   p_tokens     integer,
