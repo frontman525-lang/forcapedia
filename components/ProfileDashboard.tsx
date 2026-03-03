@@ -80,6 +80,15 @@ export default function ProfileDashboard({ user, usage }: Props) {
   const [cancelError, setCancelError] = useState<string | null>(null)
   const [cancelledNow, setCancelledNow] = useState(false)
 
+  // Billing history
+  type BillingEvent = {
+    id: string; event_type: string; provider: string
+    amount: number | null; currency: string | null
+    tier: string | null; billing_cycle: string | null; created_at: string
+  }
+  const [billingHistory,        setBillingHistory]        = useState<BillingEvent[]>([])
+  const [billingHistoryLoading, setBillingHistoryLoading] = useState(false)
+
   // Data tab
   const [deleteConfirm,  setDeleteConfirm]  = useState(false)
   const [downloading,    setDownloading]    = useState(false)
@@ -127,7 +136,7 @@ export default function ProfileDashboard({ user, usage }: Props) {
       .catch(() => setSessionsLoading(false))
   }, [tab])
 
-  // Load subscription when plan tab opens
+  // Load subscription + billing history when plan tab opens
   useEffect(() => {
     if (tab !== 'plan') return
     setSubLoading(true)
@@ -135,6 +144,12 @@ export default function ProfileDashboard({ user, usage }: Props) {
       .then(r => r.json())
       .then(data => { setSub(data?.subscription ?? null); setSubLoading(false) })
       .catch(() => setSubLoading(false))
+
+    setBillingHistoryLoading(true)
+    fetch('/api/payments/history')
+      .then(r => r.json())
+      .then(data => { setBillingHistory(data?.events ?? []); setBillingHistoryLoading(false) })
+      .catch(() => setBillingHistoryLoading(false))
   }, [tab])
 
   // Derived values
@@ -734,6 +749,59 @@ export default function ProfileDashboard({ user, usage }: Props) {
                     </div>
                   </div>
                 </div>
+              </Card>
+
+              {/* Billing history */}
+              <p style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: '0.75rem', marginTop: '1.5rem' }}>
+                Billing history
+              </p>
+              <Card>
+                {billingHistoryLoading ? (
+                  <p style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-tertiary)', textAlign: 'center', padding: '1.25rem 0' }}>
+                    Loading…
+                  </p>
+                ) : billingHistory.length === 0 ? (
+                  <p style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-tertiary)', textAlign: 'center', padding: '1.25rem 0' }}>
+                    No billing events yet.
+                  </p>
+                ) : (
+                  billingHistory.map((ev, i) => {
+                    const TIER_NAME: Record<string, string> = { tier1: 'Scholar', tier2: 'Researcher', free: 'Free' }
+                    const planLabel = ev.tier ? `${TIER_NAME[ev.tier] ?? ev.tier} — ${ev.billing_cycle ?? ''}` : '—'
+                    const isActivation = ev.event_type === 'subscription.activated'
+                    const amountStr = ev.amount != null && ev.currency
+                      ? (ev.currency === 'INR' ? `₹${ev.amount.toLocaleString('en-IN')}` : `$${ev.amount.toFixed(2)}`)
+                      : isActivation ? 'Subscription started' : '—'
+                    const dateStr = new Date(ev.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                    const providerLabel = ev.provider === 'paypal' ? 'PayPal' : ev.provider === 'cashfree' ? 'Card / UPI' : ev.provider
+
+                    return (
+                      <div key={ev.id} style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        flexWrap: 'wrap', gap: '0.5rem',
+                        padding: '0.75rem 0',
+                        borderTop: i > 0 ? '1px solid var(--border)' : 'none',
+                      }}>
+                        <div>
+                          <p style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '0.2rem' }}>
+                            {isActivation ? 'Subscription activated' : 'Payment'}
+                          </p>
+                          <p style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-tertiary)' }}>
+                            {planLabel} · {providerLabel}
+                          </p>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <p style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--gold)', fontWeight: 500 }}>
+                            {amountStr}
+                          </p>
+                          <p style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-tertiary)', marginTop: '0.15rem' }}>
+                            {dateStr}
+                          </p>
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
               </Card>
             </section>
           )}

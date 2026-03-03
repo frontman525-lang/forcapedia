@@ -30,8 +30,9 @@ function loadCashfreeSDK(mode: 'sandbox' | 'production'): Promise<CashfreeInstan
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-type Billing = 'monthly' | 'yearly'
-type Region  = 'IN' | 'GLOBAL'
+type Billing       = 'monthly' | 'yearly'
+type Region        = 'IN' | 'GLOBAL'
+type PaymentMethod = 'upi' | 'card' | 'paypal'
 
 interface PricingEntry {
   price:    string        // Monthly charge (monthly) or annual total (yearly)
@@ -42,18 +43,22 @@ interface PricingEntry {
 }
 
 interface PricingPlansProps {
-  user:                boolean
-  currentTier:         string
-  initialBilling:      Billing
-  currentBillingCycle: Billing | null
-  initialRegion:       Region
+  user:                        boolean
+  currentTier:                 string
+  initialBilling:              Billing
+  currentBillingCycle:         Billing | null
+  currentSubCancelAtPeriodEnd: boolean
+  initialRegion:               Region
 }
 
+type ChangeType = 'new' | 'upgrade' | 'downgrade' | 'cancel_to_free'
+
 interface ConfirmState {
-  tierKey:  string
-  tierName: string
-  billing:  Billing
-  pricing:  PricingEntry
+  tierKey:    string
+  tierName:   string
+  billing:    Billing
+  pricing:    PricingEntry
+  changeType: ChangeType
 }
 
 // ── Pricing config ─────────────────────────────────────────────────────────────
@@ -126,11 +131,15 @@ const FREE_DISPLAY: Record<Region, string> = { IN: '₹0', GLOBAL: '$0' }
 const TIER_LEVEL:   Record<string, number>  = { free: 0, tier1: 1, tier2: 2 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
+const TIER_LEVEL_MAP: Record<string, number>  = { free: 0, tier1: 1, tier2: 2 }
+const CYCLE_LEVEL_MAP: Record<string, number> = { monthly: 0, yearly: 1 }
+
 export default function PricingPlans({
   user,
   currentTier,
   initialBilling,
   currentBillingCycle,
+  currentSubCancelAtPeriodEnd,
   initialRegion,
 }: PricingPlansProps) {
   const [billing, setBilling] = useState<Billing>(initialBilling)
@@ -141,6 +150,7 @@ export default function PricingPlans({
   // ── Payment state ─────────────────────────────────────────────────────────
   const [buying, setBuying]           = useState<string | null>(null)
   const [globalError, setGlobalError] = useState<string | null>(null)
+  const [globalSuccess, setGlobalSuccess] = useState<string | null>(null)
   const [phoneModal, setPhoneModal]   = useState(false)
   const [pendingPlan, setPendingPlan] = useState<string | null>(null)
   const [phone, setPhone]             = useState('')
@@ -149,7 +159,14 @@ export default function PricingPlans({
 
   // ── Confirmation modal ────────────────────────────────────────────────────
   const [confirmModal, setConfirmModal]       = useState<ConfirmState | null>(null)
-  const [selectedPayment, setSelectedPayment] = useState<'upi' | 'card'>('upi')
+  // Default payment method depends on region: IN → UPI (Cashfree), GLOBAL → PayPal
+  const [selectedPayment, setSelectedPayment] = useState<PaymentMethod>(
+    initialRegion === 'IN' ? 'upi' : 'paypal'
+  )
+
+  // ── Derived: does the user have an active (non-cancelling) subscription? ──
+  const hasActiveSub = (currentTier === 'tier1' || currentTier === 'tier2') &&
+    !currentSubCancelAtPeriodEnd
 
   // ── Helpers ───────────────────────────────────────────────────────────────
   function getPricing(tierKey: 'tier1' | 'tier2', bill?: Billing): PricingEntry {
@@ -164,22 +181,33 @@ export default function PricingPlans({
   }
 
   // ── Subscribe flow ────────────────────────────────────────────────────────
-  async function initSubscribe(tierKey: string, explicitBilling?: Billing, providedPhone?: string) {
-    if (region === 'GLOBAL') {
-      setGlobalError('International payments (USD) are coming soon. We currently support UPI / NetBanking / Indian cards.')
-      setBuying(null)
-      return
-    }
-
-    const effectiveBilling = explicitBilling ?? billing
-    const planKey          = `${tierKey}_${effectiveBilling}`
+  async function initSubscribe(
+    tierKey:         string,
+    explicitBilling?: Billing,
+    providedPhone?:  string,
+    paymentProvider?: 'cashfree' | 'paypal',
+  ) {
+    const effectiveBilling  = explicitBilling ?? billing
+    const effectiveProvider = paymentProvider ?? (region === 'IN' ? 'cashfree' : 'paypal')
+    const planKey           = `${tierKey}_${effectiveBilling}`
     setBuying(planKey)
     setGlobalError(null)
 
-    const body: Record<string, string> = { tier: tierKey, billingCycle: effectiveBilling }
+    const body: Record<string, string> = {
+      tier:            tierKey,
+      billingCycle:    effectiveBilling,
+      paymentProvider: effectiveProvider,
+    }
     if (providedPhone) body.phone = providedPhone
 
-    let data: { sessionId?: string; cashfreeMode?: string; error?: string }
+    let data: {
+      checkoutMode?: string
+      sessionId?:    string
+      cashfreeMode?: string
+      approvalUrl?:  string
+      error?:        string
+    }
+
     try {
       const res = await fetch('/api/payments/subscribe', {
         method:  'POST',
@@ -193,6 +221,7 @@ export default function PricingPlans({
       return
     }
 
+    // Cashfree-specific: phone number required for mandate setup
     if (data.error === 'PHONE_REQUIRED') {
       setPendingPlan(planKey)
       setPhoneModal(true)
@@ -206,7 +235,8 @@ export default function PricingPlans({
       return
     }
 
-    if (data.sessionId) {
+    // ── Cashfree SDK checkout ──────────────────────────────────────────────
+    if (data.checkoutMode === 'sdk' && data.sessionId) {
       try {
         const mode     = (data.cashfreeMode ?? 'sandbox') as 'sandbox' | 'production'
         const cashfree = await loadCashfreeSDK(mode)
@@ -220,29 +250,101 @@ export default function PricingPlans({
       return
     }
 
+    // ── PayPal redirect checkout ───────────────────────────────────────────
+    if (data.checkoutMode === 'redirect' && data.approvalUrl) {
+      // Redirect to PayPal for approval — user returns to /payment/success
+      window.location.href = data.approvalUrl
+      return
+    }
+
     setGlobalError('Unexpected response from payment gateway.')
     setBuying(null)
   }
 
   function handleUpgradeClick(tierKey: string, tierName: string) {
     if (!user) { window.location.href = '/login'; return }
-    if (region === 'GLOBAL') {
-      setGlobalError('International payments (USD) are coming soon. We currently support UPI / NetBanking / Indian cards.')
+    const pricing = getPricing(tierKey as 'tier1' | 'tier2')
+
+    let changeType: ChangeType = 'new'
+    if (hasActiveSub) {
+      const curTierLvl  = TIER_LEVEL_MAP[currentTier]          ?? 0
+      const newTierLvl  = TIER_LEVEL_MAP[tierKey]              ?? 0
+      const curCycleLvl = CYCLE_LEVEL_MAP[currentBillingCycle ?? 'monthly'] ?? 0
+      const newCycleLvl = CYCLE_LEVEL_MAP[billing]             ?? 0
+      const isUp = newTierLvl > curTierLvl ||
+        (newTierLvl === curTierLvl && newCycleLvl > curCycleLvl)
+      changeType = isUp ? 'upgrade' : 'downgrade'
+    }
+
+    setConfirmModal({ tierKey, tierName, billing, pricing, changeType })
+    setSelectedPayment(region === 'IN' ? 'upi' : 'paypal')
+  }
+
+  async function handleConfirmPay() {
+    if (!confirmModal) return
+    const { tierKey, billing: confirmedBilling, changeType } = confirmModal
+    setConfirmModal(null)
+    const provider = selectedPayment === 'paypal' ? 'paypal' : 'cashfree'
+
+    // Cancel to Free → call cancel endpoint
+    if (changeType === 'cancel_to_free') {
+      setBuying('cancel_to_free')
+      try {
+        const res  = await fetch('/api/payments/cancel', { method: 'POST' })
+        const data = await res.json()
+        if (!res.ok) { setGlobalError(data.error ?? 'Failed to cancel.'); return }
+        setGlobalSuccess('Your subscription has been cancelled. You\'ll keep access until the end of your billing period.')
+      } catch { setGlobalError('Network error. Please try again.') }
+      finally { setBuying(null) }
       return
     }
-    const pricing = getPricing(tierKey as 'tier1' | 'tier2')
-    setConfirmModal({ tierKey, tierName, billing, pricing })
-    setSelectedPayment('upi')
+
+    // Downgrade or Upgrade → call change-plan endpoint
+    if (changeType === 'upgrade' || changeType === 'downgrade') {
+      setBuying(`${tierKey}_${confirmedBilling}`)
+      let data: Record<string, string>
+      try {
+        const res = await fetch('/api/payments/change-plan', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ tier: tierKey, billingCycle: confirmedBilling, paymentProvider: provider }),
+        })
+        data = await res.json()
+      } catch { setGlobalError('Network error. Please try again.'); setBuying(null); return }
+
+      if (data.error) { setGlobalError(data.error); setBuying(null); return }
+
+      if (data.type === 'downgrade_scheduled') {
+        setBuying(null)
+        setGlobalSuccess('Your current plan will remain active until the billing period ends. You can then resubscribe to the new plan.')
+        return
+      }
+      // Upgrade returns checkout data — fall through same as new subscription
+      if (data.checkoutMode === 'redirect' && data.approvalUrl) {
+        window.location.href = data.approvalUrl; return
+      }
+      if (data.checkoutMode === 'sdk' && data.sessionId) {
+        try {
+          const mode     = (data.cashfreeMode ?? 'sandbox') as 'sandbox' | 'production'
+          const cashfree = await loadCashfreeSDK(mode)
+          const result   = await cashfree.subscriptionsCheckout({ subsSessionId: data.sessionId, redirectTarget: '_self' })
+          if (result?.error) { setGlobalError(result.error.message) }
+        } catch { setGlobalError('Failed to open payment page.') }
+        setBuying(null); return
+      }
+      setBuying(null); return
+    }
+
+    // New subscription
+    initSubscribe(tierKey, confirmedBilling, undefined, provider)
   }
 
-  function handleConfirmPay() {
-    if (!confirmModal) return
-    const { tierKey, billing: confirmedBilling } = confirmModal
-    setConfirmModal(null)
-    initSubscribe(tierKey, confirmedBilling)
+  function handleCancelToFreeClick() {
+    if (!user) { window.location.href = '/login'; return }
+    setConfirmModal({ tierKey: 'free', tierName: 'Free', billing, pricing: { price: '$0', perMonth: null, anchor: null, label: null, note: null }, changeType: 'cancel_to_free' })
   }
 
-  async function handlePhoneSubmit(e: React.FormEvent<HTMLFormElement>) {
+  async function handlePhoneSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault()
     const digits = phone.replace(/\D/g, '')
     if (digits.length < 10) { setPhoneError('Enter a valid 10-digit mobile number.'); return }
@@ -251,7 +353,8 @@ export default function PricingPlans({
     setSubmitting(true)
     setPhoneError(null)
     setPhoneModal(false)
-    await initSubscribe(tierKey, savedBilling as Billing, digits.slice(-10))
+    // Phone is always for Cashfree (phone modal only appears for Cashfree mandate)
+    await initSubscribe(tierKey, savedBilling as Billing, digits.slice(-10), 'cashfree')
     setSubmitting(false)
   }
 
@@ -329,6 +432,24 @@ export default function PricingPlans({
         </div>
       )}
 
+      {/* ── Global success ── */}
+      {globalSuccess && (
+        <div style={{
+          maxWidth: '560px', margin: '0 auto 1.5rem',
+          padding: '10px 16px',
+          background: 'rgba(111,207,151,0.08)',
+          border: '1px solid rgba(111,207,151,0.25)',
+          borderRadius: '12px', fontSize: '13px',
+          color: '#6FCF97', lineHeight: 1.55, textAlign: 'center',
+        }}>
+          {globalSuccess}
+          <button
+            onClick={() => setGlobalSuccess(null)}
+            style={{ background: 'none', border: 'none', color: '#6FCF97', cursor: 'pointer', marginLeft: '8px', fontSize: '12px' }}
+          >✕</button>
+        </div>
+      )}
+
       {/* ── Plan cards ── */}
       <div style={{
         display: 'grid',
@@ -360,9 +481,9 @@ export default function PricingPlans({
           if (tier.key !== 'free' && !isSamePlan) {
             if (currentTier === tier.key && currentBillingCycle !== billing) {
               ctaLabel = billing === 'yearly' ? 'Switch to Annual' : 'Switch to Monthly'
-            } else if (currentLevel > 0 && thisLevel < currentLevel) {
+            } else if (hasActiveSub && thisLevel < currentLevel) {
               ctaLabel = `Downgrade to ${tier.name}`
-            } else if (currentLevel > 0 && thisLevel > currentLevel) {
+            } else if (hasActiveSub && thisLevel > currentLevel) {
               ctaLabel = `Upgrade to ${tier.name}`
             }
           }
@@ -525,16 +646,35 @@ export default function PricingPlans({
                   Your current plan
                 </div>
               ) : tier.key === 'free' ? (
-                <Link href="/" style={{
-                  display: 'block', padding: '0.62rem', borderRadius: '12px',
-                  border: '1px solid var(--border)', background: 'var(--ink-3)',
-                  textAlign: 'center', fontFamily: 'var(--font-sans)',
-                  fontSize: '14px', fontWeight: 500,
-                  color: 'var(--text-primary)', textDecoration: 'none',
-                  transition: 'border-color 0.2s, background 0.2s',
-                }}>
-                  {user ? 'Go to search' : 'Get started free'}
-                </Link>
+                hasActiveSub ? (
+                  <button
+                    onClick={handleCancelToFreeClick}
+                    disabled={buying === 'cancel_to_free'}
+                    style={{
+                      width: '100%', padding: '0.62rem', borderRadius: '12px',
+                      border: '1px solid rgba(244,124,124,0.3)',
+                      background: 'rgba(244,124,124,0.06)',
+                      color: '#F47C7C', fontFamily: 'var(--font-sans)',
+                      fontSize: '14px', fontWeight: 500, cursor: 'pointer',
+                      transition: 'all 0.2s',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.background = 'rgba(244,124,124,0.12)' }}
+                    onMouseLeave={e => { e.currentTarget.style.background = 'rgba(244,124,124,0.06)' }}
+                  >
+                    {buying === 'cancel_to_free' ? 'Cancelling…' : 'Cancel to Free'}
+                  </button>
+                ) : (
+                  <Link href="/" style={{
+                    display: 'block', padding: '0.62rem', borderRadius: '12px',
+                    border: '1px solid var(--border)', background: 'var(--ink-3)',
+                    textAlign: 'center', fontFamily: 'var(--font-sans)',
+                    fontSize: '14px', fontWeight: 500,
+                    color: 'var(--text-primary)', textDecoration: 'none',
+                    transition: 'border-color 0.2s, background 0.2s',
+                  }}>
+                    {user ? 'Go to search' : 'Get started free'}
+                  </Link>
+                )
               ) : (
                 <button
                   onClick={() => handleUpgradeClick(tier.key, tier.name)}
@@ -727,73 +867,112 @@ export default function PricingPlans({
                     ))}
                   </div>
 
-                  {/* Payment method selector */}
-                  <p style={{
-                    fontFamily: 'var(--font-mono)', fontSize: '10px',
-                    letterSpacing: '0.1em', textTransform: 'uppercase',
-                    color: 'rgba(240,237,232,0.35)', marginBottom: '0.55rem',
-                  }}>
-                    Pay with
-                  </p>
-                  <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-                    {(['upi', 'card'] as const).map(method => (
+                  {/* Downgrade / Cancel to Free — simple confirm, no payment needed */}
+                  {(cm.changeType === 'downgrade' || cm.changeType === 'cancel_to_free') ? (
+                    <>
+                      <div style={{
+                        padding: '0.75rem 1rem', borderRadius: '10px', marginBottom: '1rem',
+                        background: 'rgba(244,124,124,0.05)',
+                        border: '1px solid rgba(244,124,124,0.15)',
+                        fontSize: '12.5px', color: 'rgba(240,237,232,0.55)', lineHeight: 1.6,
+                      }}>
+                        {cm.changeType === 'cancel_to_free'
+                          ? 'Your subscription will be cancelled. You\'ll keep access until the end of your current billing period.'
+                          : 'Your current plan stays active until the billing period ends. After that, resubscribe to the new plan.'}
+                      </div>
                       <button
-                        key={method}
-                        onClick={() => setSelectedPayment(method)}
+                        onClick={handleConfirmPay}
                         style={{
-                          flex: 1, padding: '9px 0',
-                          borderRadius: '10px',
-                          border: `1px solid ${selectedPayment === method ? 'rgba(201,169,110,0.45)' : 'rgba(255,255,255,0.08)'}`,
-                          background: selectedPayment === method ? 'rgba(201,169,110,0.1)' : 'rgba(255,255,255,0.03)',
-                          color: selectedPayment === method ? '#C9A96E' : 'rgba(240,237,232,0.42)',
-                          fontFamily: 'var(--font-mono)', fontSize: '11px',
-                          letterSpacing: '0.07em', textTransform: 'uppercase',
-                          cursor: 'pointer', transition: 'all 0.15s',
+                          width: '100%', padding: '12px', borderRadius: '12px',
+                          border: '1px solid rgba(244,124,124,0.4)',
+                          background: 'rgba(244,124,124,0.1)',
+                          color: '#F47C7C', fontFamily: 'var(--font-sans)',
+                          fontSize: '14px', fontWeight: 600, cursor: 'pointer',
+                          transition: 'all 0.2s',
                         }}
                       >
-                        {method === 'upi' ? 'UPI' : 'Card'}
+                        {cm.changeType === 'cancel_to_free' ? 'Yes, cancel subscription' : 'Yes, schedule downgrade'}
                       </button>
-                    ))}
-                    {/* Stripe — coming soon */}
-                    <button disabled style={{
-                      flex: 1, padding: '9px 0',
-                      borderRadius: '10px',
-                      border: '1px solid rgba(255,255,255,0.04)',
-                      background: 'rgba(255,255,255,0.02)',
-                      color: 'rgba(240,237,232,0.2)',
-                      fontFamily: 'var(--font-mono)', fontSize: '10px',
-                      letterSpacing: '0.06em', cursor: 'not-allowed',
-                      lineHeight: 1.3,
-                    }}>
-                      Stripe<br/>
-                      <span style={{ fontSize: '8px', opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                        Soon
-                      </span>
-                    </button>
-                  </div>
+                    </>
+                  ) : (
+                    <>
+                      {/* Upgrade notice */}
+                      {cm.changeType === 'upgrade' && (
+                        <div style={{
+                          padding: '0.65rem 0.875rem', borderRadius: '10px', marginBottom: '1rem',
+                          background: 'rgba(201,169,110,0.06)',
+                          border: '1px solid rgba(201,169,110,0.18)',
+                          fontSize: '12px', color: 'rgba(240,237,232,0.5)', lineHeight: 1.55,
+                        }}>
+                          Your current plan will be cancelled immediately and the new plan starts once approved. Any unused credit from your current billing period will be applied to your first payment.
+                        </div>
+                      )}
 
-                  {/* Pay button */}
-                  <button
-                    onClick={handleConfirmPay}
-                    style={{
-                      width: '100%', padding: '12px', borderRadius: '12px',
-                      border: '1px solid rgba(201,169,110,0.35)',
-                      background: 'rgba(201,169,110,0.12)',
-                      color: '#C9A96E', fontFamily: 'var(--font-sans)',
-                      fontSize: '14px', fontWeight: 600, cursor: 'pointer',
-                      transition: 'all 0.2s',
-                    }}
-                  >
-                    Continue to {selectedPayment === 'upi' ? 'UPI' : 'Card'} payment →
-                  </button>
+                      {/* Payment method selector */}
+                      <p style={{
+                        fontFamily: 'var(--font-mono)', fontSize: '10px',
+                        letterSpacing: '0.1em', textTransform: 'uppercase',
+                        color: 'rgba(240,237,232,0.35)', marginBottom: '0.55rem',
+                      }}>
+                        Pay with
+                      </p>
+                      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                        <button
+                          onClick={() => region === 'IN' && setSelectedPayment('upi')}
+                          disabled={region !== 'IN'}
+                          title={region !== 'IN' ? 'UPI & Indian cards only' : undefined}
+                          style={{
+                            flex: 1, padding: '9px 8px', borderRadius: '10px',
+                            border: `1px solid ${selectedPayment === 'upi' ? 'rgba(201,169,110,0.45)' : 'rgba(255,255,255,0.08)'}`,
+                            background: selectedPayment === 'upi' ? 'rgba(201,169,110,0.1)' : 'rgba(255,255,255,0.03)',
+                            color: region !== 'IN' ? 'rgba(240,237,232,0.2)' : selectedPayment === 'upi' ? '#C9A96E' : 'rgba(240,237,232,0.42)',
+                            fontFamily: 'var(--font-mono)', fontSize: '10.5px',
+                            letterSpacing: '0.06em', textTransform: 'uppercase',
+                            cursor: region !== 'IN' ? 'not-allowed' : 'pointer',
+                            transition: 'all 0.15s', lineHeight: 1.35,
+                            opacity: region !== 'IN' ? 0.45 : 1,
+                          }}
+                        >
+                          UPI / Card
+                          {region === 'IN' && <span style={{ display: 'block', fontSize: '8px', opacity: 0.55 }}>India</span>}
+                        </button>
+                        <button
+                          onClick={() => setSelectedPayment('paypal')}
+                          style={{
+                            flex: 1, padding: '9px 8px', borderRadius: '10px',
+                            border: `1px solid ${selectedPayment === 'paypal' ? 'rgba(201,169,110,0.45)' : 'rgba(255,255,255,0.08)'}`,
+                            background: selectedPayment === 'paypal' ? 'rgba(201,169,110,0.1)' : 'rgba(255,255,255,0.03)',
+                            color: selectedPayment === 'paypal' ? '#C9A96E' : 'rgba(240,237,232,0.42)',
+                            fontFamily: 'var(--font-mono)', fontSize: '10.5px',
+                            letterSpacing: '0.06em', textTransform: 'uppercase',
+                            cursor: 'pointer', transition: 'all 0.15s', lineHeight: 1.35,
+                          }}
+                        >
+                          PayPal
+                          <span style={{ display: 'block', fontSize: '8px', opacity: 0.55 }}>Global</span>
+                        </button>
+                      </div>
 
-                  <p style={{
-                    textAlign: 'center', fontSize: '11px',
-                    color: 'rgba(240,237,232,0.22)',
-                    marginTop: '0.75rem',
-                  }}>
-                    Secure, encrypted payment
-                  </p>
+                      {/* Pay button */}
+                      <button
+                        onClick={handleConfirmPay}
+                        style={{
+                          width: '100%', padding: '12px', borderRadius: '12px',
+                          border: '1px solid rgba(201,169,110,0.35)',
+                          background: 'rgba(201,169,110,0.12)',
+                          color: '#C9A96E', fontFamily: 'var(--font-sans)',
+                          fontSize: '14px', fontWeight: 600, cursor: 'pointer',
+                          transition: 'all 0.2s',
+                        }}
+                      >
+                        {selectedPayment === 'paypal' ? 'Continue with PayPal →' : 'Continue to UPI / Card →'}
+                      </button>
+
+                      <p style={{ textAlign: 'center', fontSize: '11px', color: 'rgba(240,237,232,0.22)', marginTop: '0.75rem' }}>
+                        Secure, encrypted payment
+                      </p>
+                    </>
+                  )}
                 </div>
               </div>
             </div>

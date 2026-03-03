@@ -57,6 +57,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             {children}
           </AlertProvider>
         </ThemeProvider>
+        <footer
+          style={{
+            textAlign: 'center',
+            padding: '1rem 0 1.5rem',
+            fontFamily: 'var(--font-mono)',
+            fontSize: '10px',
+            letterSpacing: '0.06em',
+            textTransform: 'uppercase',
+            color: 'var(--text-tertiary)',
+          }}
+        >
+          © 2026 FORCAPEDIA. All rights reserved.
+        </footer>
       </body>
     </html>
   )

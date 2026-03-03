@@ -28,8 +28,9 @@ export default async function PricingPage({ searchParams }: Props) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
-  let currentTier = 'none'
-  let currentBillingCycle: 'monthly' | 'yearly' | null = null
+  let currentTier                = 'none'
+  let currentBillingCycle:         'monthly' | 'yearly' | null = null
+  let currentSubCancelAtPeriodEnd = false
 
   if (user) {
     const [{ data: usage }, { data: activeSub }] = await Promise.all([
@@ -40,15 +41,17 @@ export default async function PricingPage({ searchParams }: Props) {
         .single(),
       supabase
         .from('subscriptions')
-        .select('billing_cycle')
+        .select('billing_cycle, cancel_at_period_end')
         .eq('user_id', user.id)
         .eq('status', 'active')
+        .order('created_at', { ascending: false })
         .limit(1)
-        .single(),
+        .maybeSingle(),
     ])
-    
-    currentTier         = usage?.tier ?? 'free'
-    currentBillingCycle = (activeSub?.billing_cycle as 'monthly' | 'yearly' | undefined) ?? null
+
+    currentTier                = usage?.tier ?? 'free'
+    currentBillingCycle        = (activeSub?.billing_cycle as 'monthly' | 'yearly' | undefined) ?? null
+    currentSubCancelAtPeriodEnd = activeSub?.cancel_at_period_end ?? false
   }
 
 
@@ -65,6 +68,7 @@ export default async function PricingPage({ searchParams }: Props) {
             currentTier={currentTier}
             initialBilling={initialBilling}
             currentBillingCycle={currentBillingCycle}
+            currentSubCancelAtPeriodEnd={currentSubCancelAtPeriodEnd}
             initialRegion={initialRegion}
           />
         </div>

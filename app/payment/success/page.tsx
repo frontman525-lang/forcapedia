@@ -167,7 +167,7 @@ function SuccessContent() {
                   fontWeight: 300, lineHeight: 1.65,
                   marginBottom: '1.5rem',
                 }}>
-                  We&apos;re confirming your payment mandate with Cashfree.
+                  We&apos;re confirming your payment and activating your subscription.
                   This usually takes a few seconds.
                 </p>
                 <p style={{
