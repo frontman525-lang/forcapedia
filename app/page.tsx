@@ -91,19 +91,24 @@ export default function HomePage() {
           bottom: '1rem',
           zIndex: 20,
           display: 'flex',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: '0.7rem',
+          flexDirection: 'column',
+          alignItems: 'flex-end',
+          gap: '0.45rem',
           fontFamily: 'var(--font-mono)',
           fontSize: '10px',
           letterSpacing: '0.06em',
           textTransform: 'uppercase',
         }}
       >
-        <Link href="/terms"   style={{ color: 'var(--text-tertiary)', textDecoration: 'none' }}>Terms</Link>
-        <Link href="/privacy" style={{ color: 'var(--text-tertiary)', textDecoration: 'none' }}>Privacy</Link>
-        <Link href="/pricing" style={{ color: 'var(--text-tertiary)', textDecoration: 'none' }}>Pricing</Link>
-        <Link href="/contact" style={{ color: 'var(--text-tertiary)', textDecoration: 'none' }}>Contact</Link>
+        <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '0.7rem' }}>
+          <Link href="/terms"   style={{ color: 'var(--text-tertiary)', textDecoration: 'none' }}>Terms</Link>
+          <Link href="/privacy" style={{ color: 'var(--text-tertiary)', textDecoration: 'none' }}>Privacy</Link>
+          <Link href="/pricing" style={{ color: 'var(--text-tertiary)', textDecoration: 'none' }}>Pricing</Link>
+          <Link href="/contact" style={{ color: 'var(--text-tertiary)', textDecoration: 'none' }}>Contact</Link>
+        </div>
+        <p style={{ margin: 0, color: 'var(--text-tertiary)', opacity: 0.7 }}>
+          © 2026 FORCAPEDIA. All rights reserved.
+        </p>
       </div>
     </>
   )
