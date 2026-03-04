@@ -106,9 +106,7 @@ export default function HomePage() {
           <Link href="/pricing" style={{ color: 'var(--text-tertiary)', textDecoration: 'none' }}>Pricing</Link>
           <Link href="/contact" style={{ color: 'var(--text-tertiary)', textDecoration: 'none' }}>Contact</Link>
         </div>
-        <p style={{ margin: 0, color: 'var(--text-tertiary)', opacity: 0.7 }}>
-          © 2026 FORCAPEDIA. All rights reserved.
-        </p>
+      
       </div>
     </>
   )

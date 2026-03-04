@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import Nav from '@/components/Nav'
+import LegalPageFooter from '@/components/LegalPageFooter'
 
 export const metadata: Metadata = { title: 'Privacy Policy - Forcapedia' }
 
@@ -178,29 +179,7 @@ export default function PrivacyPage() {
             </p>
           </div>
 
-          <div style={{
-            marginTop: '3rem', paddingTop: '2rem', borderTop: '1px solid var(--border)',
-            display: 'flex', gap: '1.5rem', flexWrap: 'wrap',
-          }}>
-            <Link href="/terms" style={{
-              fontFamily: 'var(--font-mono)', fontSize: '11px', letterSpacing: '0.05em',
-              textTransform: 'uppercase', color: 'var(--text-tertiary)', textDecoration: 'none',
-            }}>
-              Terms of Service
-            </Link>
-            <Link href="/pricing" style={{
-              fontFamily: 'var(--font-mono)', fontSize: '11px', letterSpacing: '0.05em',
-              textTransform: 'uppercase', color: 'var(--text-tertiary)', textDecoration: 'none',
-            }}>
-              Pricing
-            </Link>
-            <Link href="/" style={{
-              fontFamily: 'var(--font-mono)', fontSize: '11px', letterSpacing: '0.05em',
-              textTransform: 'uppercase', color: 'var(--text-tertiary)', textDecoration: 'none',
-            }}>
-              &larr; Home
-            </Link>
-          </div>
+          <LegalPageFooter />
         </div>
       </main>
     </>
