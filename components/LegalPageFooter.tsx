@@ -86,7 +86,7 @@ export default function LegalPageFooter() {
             color: 'var(--text-tertiary)',
           }}
         >
-          (c) 2026 Forcapedia. Operated by ForcaLabs.
+          (c) 2026 Forcapedia. All rights reserved.
         </p>
         <p
           style={{

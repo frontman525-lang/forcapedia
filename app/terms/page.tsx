@@ -40,7 +40,7 @@ export default function TermsPage() {
               do not use the Service.
             </p>
             <p>
-              Forcapedia is operated by ForcaLabs.
+              Forcapedia operates this Service.
             </p>
 
             <h2>1. Scope of Service</h2>
@@ -166,8 +166,8 @@ export default function TermsPage() {
 
             <h2>13. Governing Law and Disputes</h2>
             <p>
-              These Terms are governed by applicable law in the jurisdiction associated with ForcaLabs,
-              without regard to conflict-of-law rules.
+              These Terms are governed by applicable law in the jurisdiction associated with Forcapedia&apos;s
+              operating entity, without regard to conflict-of-law rules.
             </p>
             <p>
               Before filing formal claims, you agree to contact us and attempt good-faith resolution.
