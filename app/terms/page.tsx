@@ -39,9 +39,6 @@ export default function TermsPage() {
               services (collectively, the &quot;Service&quot;), you agree to these Terms. If you do not agree,
               do not use the Service.
             </p>
-            <p>
-              Forcapedia operates this Service.
-            </p>
 
             <h2>1. Scope of Service</h2>
             <p>
