@@ -40,7 +40,7 @@ export default function TermsPage() {
               do not use the Service.
             </p>
             <p>
-              Forcapedia is operated by ForcaLabs (legal name: SHAIK MOHAMMAD AZEEM).
+              Forcapedia is operated by ForcaLabs.
             </p>
 
             <h2>1. Scope of Service</h2>
@@ -183,6 +183,9 @@ export default function TermsPage() {
             <p>
               For questions about these Terms, see our <Link href="/contact" style={{ color: 'var(--gold)' }}>Contact page</Link>.
               For account and data actions, visit your <Link href="/profile" style={{ color: 'var(--gold)' }}>Account settings</Link>.
+            </p>
+            <p>
+              Legal name: SHAIK MOHAMMAD AZEEM.
             </p>
           </div>
 
