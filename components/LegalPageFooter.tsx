@@ -86,7 +86,7 @@ export default function LegalPageFooter() {
             color: 'var(--text-tertiary)',
           }}
         >
-          (c) 2026 Forcapedia. Operated by SHAIK MOHAMMAD AZEEM (trading as ForcaLabs).
+          (c) 2026 Forcapedia. Operated by ForcaLabs.
         </p>
         <p
           style={{
