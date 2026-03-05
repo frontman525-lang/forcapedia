@@ -5,7 +5,7 @@ import LegalPageFooter from '@/components/LegalPageFooter'
 
 export const metadata: Metadata = { title: 'Terms of Service - Forcapedia' }
 
-const LAST_UPDATED = 'February 24, 2026'
+const LAST_UPDATED = 'March 5, 2026'
 
 export default function TermsPage() {
   return (
@@ -38,6 +38,10 @@ export default function TermsPage() {
               (&quot;Forcapedia&quot;, &quot;we&quot;, &quot;us&quot;, &quot;our&quot;). By accessing or using our website, APIs, and related
               services (collectively, the &quot;Service&quot;), you agree to these Terms. If you do not agree,
               do not use the Service.
+            </p>
+            <p>
+              Forcapedia is operated by SHAIK MOHAMMAD AZEEM, trading as ForcaLabs
+              (&quot;Operating Entity&quot;). Depending on your payment method, charges may appear under ForcaLabs.
             </p>
 
             <h2>1. Scope of Service</h2>
@@ -163,8 +167,8 @@ export default function TermsPage() {
 
             <h2>13. Governing Law and Disputes</h2>
             <p>
-              These Terms are governed by applicable law in the jurisdiction associated with Forcapedia&apos;s
-              operating entity, without regard to conflict-of-law rules.
+              These Terms are governed by applicable law in the jurisdiction associated with the Operating
+              Entity, without regard to conflict-of-law rules.
             </p>
             <p>
               Before filing formal claims, you agree to contact us and attempt good-faith resolution.
