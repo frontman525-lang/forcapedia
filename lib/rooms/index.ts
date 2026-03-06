@@ -194,7 +194,7 @@ export async function saveAndCloseRoom(
       endedAt:         endedAt.toISOString(),
     }
 
-    await admin.from('session_summaries').insert({
+    const { error: summaryInsertError } = await admin.from('session_summaries').insert({
       room_id:          roomId,
       host_id:          room.host_id,
       room_name:        roomName,
@@ -210,7 +210,10 @@ export async function saveAndCloseRoom(
       ended_at:         endedAt.toISOString(),
       duration_seconds: durationSeconds,
       messages_json:    messages.length > 0 ? messages : null,
-    }).catch(err => console.error('[rooms] session_summaries insert error:', err))
+    })
+    if (summaryInsertError) {
+      console.error('[rooms] session_summaries insert error:', summaryInsertError)
+    }
 
     await admin.from('study_rooms')
       .update({ status: 'ended', ended_at: endedAt.toISOString() })
@@ -228,7 +231,6 @@ export async function saveAndCloseRoom(
     await admin.from('study_rooms')
       .update({ status: 'ended', ended_at: endedAt.toISOString() })
       .eq('id', roomId)
-      .catch(() => null)
     return null
   }
 }
