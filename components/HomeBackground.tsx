@@ -10,6 +10,10 @@ const CSS = `
   z-index: 0;
   background: #000;
   overflow: hidden;
+  /* Promote to GPU compositor layer — stays locked during scroll/overscroll bounce */
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  will-change: transform;
 }
 .hb-bg::before {
   content: '';

@@ -148,6 +148,12 @@ export default function ArticleView({ article }: { article: Article }) {
   const [studyJoining, setStudyJoining] = useState(false)
   const [studyJoinError, setStudyJoinError] = useState<string | null>(null)
   const [studyTier, setStudyTier] = useState<string | null>(null)
+  const [studyRoomName, setStudyRoomName] = useState('')
+  const [studyRoomTopic, setStudyRoomTopic] = useState('')
+  const [studyRoomPassword, setStudyRoomPassword] = useState('')
+  const [studyCreateError, setStudyCreateError] = useState<string | null>(null)
+  const [studyJoinPassword, setStudyJoinPassword] = useState('')
+  const [studyJoinNeedsPassword, setStudyJoinNeedsPassword] = useState(false)
   const [openSectionId, setOpenSectionId] = useState('')
   const recordedRef = useRef(false)
 
@@ -323,6 +329,42 @@ export default function ArticleView({ article }: { article: Article }) {
     target.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }, [activeSectionId, isDesktopLayout])
 
+  async function doJoinRoom() {
+    if (!studyJoinCode || studyJoining) return
+    if (studyJoinNeedsPassword && !studyJoinPassword) {
+      setStudyJoinError('Please enter the room password.')
+      return
+    }
+    setStudyJoining(true)
+    setStudyJoinError(null)
+    try {
+      const res = await fetch(`/api/rooms/${studyJoinCode}/join`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: studyJoinPassword || undefined }),
+      })
+      if (res.ok) {
+        router.push(`/room/${studyJoinCode}`)
+        return
+      }
+      const d = await res.json().catch(() => ({}))
+      if (d.error === 'PASSWORD_REQUIRED') {
+        setStudyJoinNeedsPassword(true)
+        setStudyJoinError('This room requires a password.')
+      } else if (d.error === 'Incorrect password.') {
+        setStudyJoinNeedsPassword(true)
+        setStudyJoinError('Incorrect password. Try again.')
+      } else if (res.status === 404) {
+        setStudyJoinError('Room not found or already closed.')
+      } else {
+        // Room found but might have other errors — just navigate and let the page handle it
+        router.push(`/room/${studyJoinCode}`)
+      }
+    } finally {
+      setStudyJoining(false)
+    }
+  }
+
   const closeStudyModal = () => {
     setStudyModal(false)
     setStudyMode('solo')
@@ -331,6 +373,12 @@ export default function ArticleView({ article }: { article: Article }) {
     setStudyRoomCopied(false)
     setStudyJoinCode('')
     setStudyJoinError(null)
+    setStudyRoomName('')
+    setStudyRoomTopic('')
+    setStudyRoomPassword('')
+    setStudyCreateError(null)
+    setStudyJoinPassword('')
+    setStudyJoinNeedsPassword(false)
   }
 
   // Close study modal on Escape
@@ -536,6 +584,23 @@ export default function ArticleView({ article }: { article: Article }) {
                   </button>
                 </div>
 
+                {/* WhatsApp share */}
+                <button
+                  onClick={() => {
+                    const text = encodeURIComponent(`Join my Forcapedia study room! ${studyRoomLink ?? ''}`)
+                    window.open(`https://wa.me/?text=${text}`, '_blank')
+                  }}
+                  style={{
+                    width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem',
+                    padding: '0.6rem', marginBottom: '0.6rem',
+                    background: 'rgba(37,211,102,0.08)', border: '1px solid rgba(37,211,102,0.2)', borderRadius: '10px',
+                    color: '#25d366', fontFamily: 'var(--font-mono)', fontSize: '12px', letterSpacing: '0.06em',
+                    cursor: 'pointer', transition: 'all 0.15s',
+                  }}
+                >
+                  Share via WhatsApp
+                </button>
+
                 {/* Enter Room CTA */}
                 <button
                   onClick={() => router.push(`/room/${studyRoomCode}`)}
@@ -562,42 +627,82 @@ export default function ArticleView({ article }: { article: Article }) {
                     <Link href="/pricing" onClick={closeStudyModal} style={{ color: 'var(--gold)', fontFamily: 'var(--font-mono)', fontSize: '12px', letterSpacing: '0.06em' }}>Upgrade to Scholar →</Link>
                   </div>
                 ) : (
-                  <button
-                    onClick={async () => {
-                      setStudyCreating(true)
-                      try {
-                        const res = await fetch('/api/rooms/create', {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({ articleSlug: article.slug, articleTitle: article.title }),
-                        })
-                        if (res.ok) {
-                          const { code } = await res.json()
-                          setStudyRoomCode(code)
-                          setStudyRoomLink(`${window.location.origin}/room/${code}`)
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginBottom: '1.25rem' }}>
+                    {/* Room name (required) */}
+                    <input
+                      type="text" placeholder="Room name (required)" value={studyRoomName}
+                      onChange={e => { setStudyRoomName(e.target.value); setStudyCreateError(null) }}
+                      maxLength={60}
+                      style={{ background: 'var(--ink-3)', border: studyCreateError && !studyRoomName.trim() ? '1px solid rgba(244,124,124,0.4)' : '1px solid var(--border)', borderRadius: '10px', padding: '0.6rem 0.75rem', fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-primary)', outline: 'none', letterSpacing: '0.04em' }}
+                    />
+                    {/* Topic (optional) */}
+                    <input
+                      type="text" placeholder="Topic / description (optional)" value={studyRoomTopic}
+                      onChange={e => setStudyRoomTopic(e.target.value)}
+                      maxLength={120}
+                      style={{ background: 'var(--ink-3)', border: '1px solid var(--border)', borderRadius: '10px', padding: '0.6rem 0.75rem', fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-primary)', outline: 'none', letterSpacing: '0.04em' }}
+                    />
+                    {/* Password (required) */}
+                    <input
+                      type="password" placeholder="Room password (required)" value={studyRoomPassword}
+                      onChange={e => { setStudyRoomPassword(e.target.value); setStudyCreateError(null) }}
+                      style={{ background: 'var(--ink-3)', border: studyCreateError && !studyRoomPassword.trim() ? '1px solid rgba(244,124,124,0.4)' : '1px solid var(--border)', borderRadius: '10px', padding: '0.6rem 0.75rem', fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-primary)', outline: 'none', letterSpacing: '0.04em' }}
+                    />
+                    {studyCreateError && (
+                      <p style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--red, #F47C7C)', letterSpacing: '0.04em' }}>{studyCreateError}</p>
+                    )}
+                    <button
+                      onClick={async () => {
+                        if (!studyRoomName.trim()) { setStudyCreateError('Room name is required.'); return }
+                        if (!studyRoomPassword.trim()) { setStudyCreateError('Room password is required.'); return }
+                        setStudyCreating(true)
+                        setStudyCreateError(null)
+                        try {
+                          const res = await fetch('/api/rooms/create', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              articleSlug: article.slug, articleTitle: article.title,
+                              roomName: studyRoomName.trim(),
+                              topic: studyRoomTopic.trim() || undefined,
+                              password: studyRoomPassword || undefined,
+                            }),
+                          })
+                          if (res.ok) {
+                            const { code } = await res.json()
+                            setStudyRoomCode(code)
+                            setStudyRoomLink(`${window.location.origin}/room/${code}`)
+                          } else {
+                            const d = await res.json().catch(() => ({}))
+                            if (res.status === 409 && d.existingCode) {
+                              setStudyCreateError(`You already have an active room. Join it at /room/${d.existingCode}`)
+                            } else {
+                              setStudyCreateError(d.error ?? 'Failed to create room.')
+                            }
+                          }
+                        } finally {
+                          setStudyCreating(false)
                         }
-                      } finally {
-                        setStudyCreating(false)
-                      }
-                    }}
-                    disabled={studyCreating}
-                    style={{
-                      width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
-                      padding: '0.875rem', marginBottom: '1.25rem',
-                      background: 'var(--gold-dim)', border: '1px solid var(--border-gold)', borderRadius: '14px',
-                      color: 'var(--gold)', fontFamily: 'var(--font-mono)', fontSize: '12px', letterSpacing: '0.08em',
-                      cursor: studyCreating ? 'default' : 'pointer', transition: 'opacity 0.15s',
-                    }}
-                  >
-                    {studyCreating ? (
-                      <>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ animation: 'spin 0.75s linear infinite', flexShrink: 0 }}>
-                          <path d="M12 2a10 10 0 0 1 10 10" />
-                        </svg>
-                        Creating…
-                      </>
-                    ) : '+ Create Room'}
-                  </button>
+                      }}
+                      disabled={studyCreating}
+                      style={{
+                        width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+                        padding: '0.875rem',
+                        background: 'var(--gold-dim)', border: '1px solid var(--border-gold)', borderRadius: '14px',
+                        color: 'var(--gold)', fontFamily: 'var(--font-mono)', fontSize: '12px', letterSpacing: '0.08em',
+                        cursor: studyCreating ? 'default' : 'pointer', transition: 'opacity 0.15s',
+                      }}
+                    >
+                      {studyCreating ? (
+                        <>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ animation: 'spin 0.75s linear infinite', flexShrink: 0 }}>
+                            <path d="M12 2a10 10 0 0 1 10 10" />
+                          </svg>
+                          Creating…
+                        </>
+                      ) : '+ Create Room'}
+                    </button>
+                  </div>
                 )}
 
                 {/* Divider */}
@@ -608,18 +713,23 @@ export default function ArticleView({ article }: { article: Article }) {
                 </div>
 
                 {/* Join existing room */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {/* Room code row */}
                   <div style={{ display: 'flex', gap: '0.5rem' }}>
                     <input
                       type="text"
                       placeholder="Enter room code…"
                       value={studyJoinCode}
-                      onChange={e => { setStudyJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '')); setStudyJoinError(null) }}
+                      onChange={e => {
+                        setStudyJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))
+                        setStudyJoinError(null)
+                        setStudyJoinNeedsPassword(false)
+                        setStudyJoinPassword('')
+                      }}
                       onKeyDown={async e => {
                         if (e.key !== 'Enter' || !studyJoinCode || studyJoining) return
-                        setStudyJoining(true)
-                        await new Promise(r => setTimeout(r, 300))
-                        router.push(`/room/${studyJoinCode}`)
+                        if (studyJoinNeedsPassword && !studyJoinPassword) return
+                        doJoinRoom()
                       }}
                       style={{
                         flex: 1, background: 'var(--ink-3)',
@@ -630,12 +740,7 @@ export default function ArticleView({ article }: { article: Article }) {
                       }}
                     />
                     <button
-                      onClick={async () => {
-                        if (!studyJoinCode || studyJoining) return
-                        setStudyJoining(true)
-                        await new Promise(r => setTimeout(r, 300))
-                        router.push(`/room/${studyJoinCode}`)
-                      }}
+                      onClick={doJoinRoom}
                       disabled={!studyJoinCode || studyJoining}
                       style={{
                         display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem',
@@ -655,6 +760,27 @@ export default function ArticleView({ article }: { article: Article }) {
                       ) : 'Join →'}
                     </button>
                   </div>
+
+                  {/* Password field — shown when room requires it */}
+                  {studyJoinNeedsPassword && (
+                    <input
+                      type="password"
+                      placeholder="Room password…"
+                      value={studyJoinPassword}
+                      autoFocus
+                      onChange={e => { setStudyJoinPassword(e.target.value); setStudyJoinError(null) }}
+                      onKeyDown={e => { if (e.key === 'Enter') doJoinRoom() }}
+                      style={{
+                        background: 'var(--ink-3)',
+                        border: studyJoinError ? '1px solid rgba(244,124,124,0.4)' : '1px solid rgba(201,169,110,0.3)',
+                        borderRadius: '10px', padding: '0.625rem 0.875rem',
+                        fontFamily: 'var(--font-mono)', fontSize: '12px', letterSpacing: '0.08em',
+                        color: 'var(--text-primary)', outline: 'none',
+                        animation: 'fadeIn 0.15s ease',
+                      }}
+                    />
+                  )}
+
                   {studyJoinError && (
                     <p style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--red)', letterSpacing: '0.04em', animation: 'fadeIn 0.15s ease' }}>
                       {studyJoinError}

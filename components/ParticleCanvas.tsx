@@ -100,9 +100,18 @@ export default function ParticleCanvas({ fullScreen = false, count = 80 }: Props
 
     let animId: number
 
+    // On mobile, the virtual keyboard fires a resize event that shrinks
+    // window.innerHeight — we don't want the canvas to shrink because that
+    // causes the background to visually jump/reflow.
+    // Strategy: only resize when the WIDTH changes (orientation change) or
+    // when the new height is LARGER than the current canvas (keyboard closed).
     const resize = () => {
-      canvas.width  = window.innerWidth
-      canvas.height = window.innerHeight
+      const newW = window.innerWidth
+      const newH = window.innerHeight
+      if (newW !== canvas.width || newH > canvas.height) {
+        canvas.width  = newW
+        canvas.height = newH
+      }
     }
     resize()
     window.addEventListener('resize', resize, { passive: true })

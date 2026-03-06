@@ -1,9 +1,10 @@
 // POST /api/rooms/[code]/leave
-// Marks member as left. If no active members remain, closes and wipes the room.
-// Also called via navigator.sendBeacon on tab close.
+// If HOST leaves → close room for everyone + save session summary.
+// If member leaves → mark left_at. If no one remains → close.
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createClient } from '@/lib/supabase/server'
+import { saveAndCloseRoom, type SessionSummary } from '@/lib/rooms'
 
 interface Props { params: Promise<{ code: string }> }
 
@@ -24,13 +25,14 @@ export async function POST(_req: Request, { params }: Props) {
 
   if (!room) return NextResponse.json({ ok: true })
 
+  const isHost = room.host_id === user.id
+
   // Mark member as left
   await admin.from('room_members')
     .update({ left_at: new Date().toISOString() })
     .eq('room_id', room.id)
     .eq('user_id', user.id)
 
-  // System message
   const { data: memberRow } = await admin
     .from('room_members')
     .select('display_name, avatar_color')
@@ -38,7 +40,7 @@ export async function POST(_req: Request, { params }: Props) {
     .eq('user_id', user.id)
     .maybeSingle()
 
-  if (memberRow) {
+  if (memberRow && !isHost) {
     await admin.from('room_messages').insert({
       room_id:      room.id,
       user_id:      user.id,
@@ -49,31 +51,27 @@ export async function POST(_req: Request, { params }: Props) {
     })
   }
 
-  // Check if any active members remain
+  // Host leaves → close room for everyone
+  if (isHost) {
+    const summary = await saveAndCloseRoom(admin, room.id)
+    return NextResponse.json({ ok: true, hostLeft: true, summary })
+  }
+
+  // Check if any active approved members remain
   const { count } = await admin
     .from('room_members')
     .select('id', { count: 'exact', head: true })
     .eq('room_id', room.id)
+    .eq('join_status', 'approved')
     .is('kicked_at', null)
     .is('left_at', null)
 
   if ((count ?? 0) === 0) {
-    await closeAndWipe(admin, room.id)
+    await saveAndCloseRoom(admin, room.id)
   }
 
   return NextResponse.json({ ok: true })
 }
 
-export async function closeAndWipe(admin: ReturnType<typeof createAdminClient>, roomId: string) {
-  await admin.from('study_rooms').update({
-    status:   'ended',
-    ended_at: new Date().toISOString(),
-  }).eq('id', roomId)
-
-  // Wipe temporary data
-  await Promise.all([
-    admin.from('room_messages').delete().eq('room_id', roomId),
-    admin.from('room_highlights').delete().eq('room_id', roomId),
-    admin.from('room_navigation_history').delete().eq('room_id', roomId),
-  ])
-}
+// Re-export for backward compat (used by close/route.ts)
+export { saveAndCloseRoom as closeAndWipe }

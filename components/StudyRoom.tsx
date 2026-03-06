@@ -7,18 +7,11 @@ import { createClient } from '@/lib/supabase/client'
 import type { RealtimeChannel } from '@supabase/supabase-js'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-interface Room {
-  id: string; code: string; host_id: string
-  article_slug: string; article_title: string; max_members: number
-}
 interface Member {
   id: string; user_id: string; display_name: string
   avatar_color: string; is_host: boolean; is_observer: boolean
   left_at: string | null; kicked_at: string | null
-}
-interface ChatMessage {
-  id: string; user_id: string; display_name: string
-  avatar_color: string; content: string; kind: string; created_at: string
+  join_status?: string; badge?: string | null
 }
 interface NavEntry {
   id: string; article_slug: string; article_title: string; navigated_at: string
@@ -30,14 +23,35 @@ interface FloatingReaction { id: string; emoji: string; x: number; y: number; la
 interface SharedExplain  { selectedText: string; explanation: string; triggeredBy: string; color: string }
 interface NavNotification { slug: string; title: string }
 interface NavRequest      { requestId: string; userId: string; displayName: string; targetSlug: string; targetTitle: string }
-interface CurrentUser     { id: string; name: string; avatarColor: string; isHost: boolean; isObserver: boolean; tier: string }
 interface SearchResult    { slug: string; title: string; category: string }
+interface PendingAdmission { userId: string; displayName: string; avatarColor: string }
+
+interface Room {
+  id: string; code: string; host_id: string
+  article_slug: string; article_title: string; max_members: number
+  room_name?: string; topic?: string; password_hash?: string | null
+}
+
+interface ChatMessage {
+  id: string; user_id: string; display_name: string
+  avatar_color: string; content: string; kind: string; created_at: string
+  pinned?: boolean; deleted_at?: string | null; badge?: string | null
+}
+
+interface CurrentUser { id: string; name: string; avatarColor: string; isHost: boolean; isObserver: boolean; tier: string; badge?: string | null }
+
+interface SessionSummary {
+  roomName: string; memberCount: number; memberNames: string[]
+  articleTitles: string[]; doubtsResolved: number; messageCount: number
+  durationSeconds: number
+}
 
 interface StudyRoomProps {
   roomCode: string; room: Room
   initialMembers: Member[]; initialMessages: ChatMessage[]
   initialNavHistory: NavEntry[]; initialArticle: Article
   currentUser: CurrentUser; initialHighlights: unknown[]
+  isPending?: boolean; needsPassword?: boolean
 }
 
 const REACTIONS = ['🔥', '💯', '🤔', '❓']
@@ -62,9 +76,29 @@ function Avatar({ name, color, size = 28 }: { name: string; color: string; size?
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// ── Audio helpers ─────────────────────────────────────────────────────────────
+function playSound(type: 'ping' | 'chime' | 'alert') {
+  try {
+    const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)()
+    const o = ctx.createOscillator()
+    const g = ctx.createGain()
+    o.connect(g); g.connect(ctx.destination)
+    if (type === 'ping')  { o.frequency.value = 880; g.gain.setValueAtTime(0.15, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.18) }
+    if (type === 'chime') { o.frequency.value = 660; g.gain.setValueAtTime(0.2, ctx.currentTime);  g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4) }
+    if (type === 'alert') { o.frequency.value = 440; g.gain.setValueAtTime(0.25, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3) }
+    o.start(); o.stop(ctx.currentTime + 0.5)
+  } catch { /* ignore */ }
+}
+
+function getBadgeEmoji(badge: string | null | undefined): string {
+  const map: Record<string, string> = { scholar: '🎓', star: '⭐', science: '🔬', bookworm: '📚', researcher: '👑', diamond: '💎', explorer: '🚀', elite: '⚡', legend: '🌟' }
+  return badge ? (map[badge] ?? '') : ''
+}
+
 export default function StudyRoom({
   roomCode, room, initialMembers, initialMessages,
   initialNavHistory, initialArticle, currentUser,
+  isPending: isPendingProp = false, needsPassword = false,
 }: StudyRoomProps) {
   const router  = useRouter()
   const supabase = createClient()
@@ -102,6 +136,20 @@ export default function StudyRoom({
   const [chatError,       setChatError]       = useState('')
   const [transferModal,   setTransferModal]   = useState(false)
 
+  // ── v2 state ───────────────────────────────────────────────────────────────
+  const [isPendingState,     setIsPendingState]     = useState(isPendingProp)
+  const [passwordInput,      setPasswordInput]      = useState('')
+  const [passwordError,      setPasswordError]      = useState('')
+  const [passwordLoading,    setPasswordLoading]    = useState(false)
+  const [pendingAdmissions,  setPendingAdmissions]  = useState<PendingAdmission[]>([])
+  const [pinnedMessage,      setPinnedMessage]      = useState<ChatMessage | null>(null)
+  const [activeTab,          setActiveTab]          = useState<'chat' | 'doubts'>('chat')
+  const [unreadDoubts,       setUnreadDoubts]       = useState(0)
+  const [doNotDisturb,       setDoNotDisturb]       = useState(false)
+  const [sessionSummary,     setSessionSummary]     = useState<SessionSummary | null>(null)
+  const [elapsedSeconds,     setElapsedSeconds]     = useState(0)
+  const startTimeRef = useRef(Date.now())
+
   // ── Mobile detection ───────────────────────────────────────────────────────
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 768)
@@ -109,6 +157,23 @@ export default function StudyRoom({
     window.addEventListener('resize', check)
     return () => window.removeEventListener('resize', check)
   }, [])
+
+  // ── Session timer ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    const id = setInterval(() => setElapsedSeconds(Math.floor((Date.now() - startTimeRef.current) / 1000)), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  // ── Broadcast join_request when pending ───────────────────────────────────
+  useEffect(() => {
+    if (!isPendingState) return
+    const timer = setTimeout(() => {
+      chRef.current?.send({ type: 'broadcast', event: 'join_request', payload: {
+        userId: currentUser.id, displayName: currentUser.name, avatarColor: currentUser.avatarColor,
+      }})
+    }, 1500)
+    return () => clearTimeout(timer)
+  }, [isPendingState]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Supabase Realtime ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -133,6 +198,7 @@ export default function StudyRoom({
       .on('broadcast', { event: 'message' }, ({ payload }) => {
         setMessages(prev => [...prev.slice(-19), payload as ChatMessage])
         setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+        if (!doNotDisturb) playSound('ping')
       })
       .on('broadcast', { event: 'reaction' }, ({ payload }) => {
         const id = `${Date.now()}-${Math.random()}`
@@ -148,6 +214,7 @@ export default function StudyRoom({
           kind: 'explain', created_at: new Date().toISOString(),
         }])
         setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+        if (!doNotDisturb) playSound('chime')
       })
       .on('broadcast', { event: 'navigate' }, ({ payload }) => {
         fetchArticle(payload.slug)
@@ -158,7 +225,36 @@ export default function StudyRoom({
         if (payload.userId === currentUser.id) { setSessionEnded(true); return }
         setMembers(prev => prev.filter(m => m.user_id !== payload.userId))
       })
-      .on('broadcast', { event: 'room_closed' }, () => setSessionEnded(true))
+      .on('broadcast', { event: 'room_closed' }, ({ payload }) => {
+        if (payload?.summary) setSessionSummary(payload.summary as SessionSummary)
+        setSessionEnded(true)
+      })
+      .on('broadcast', { event: 'join_request' }, ({ payload }) => {
+        if (!currentUser.isHost) return
+        if (!doNotDisturb) playSound('alert')
+        setPendingAdmissions(prev => prev.some(p => p.userId === payload.userId) ? prev : [...prev, payload as PendingAdmission])
+      })
+      .on('broadcast', { event: 'admit_approved' }, ({ payload }) => {
+        if (payload.userId === currentUser.id) {
+          setIsPendingState(false)
+          window.location.reload()
+        }
+        setMembers(prev => prev.map(m => m.user_id === payload.userId ? { ...m, join_status: 'approved' } : m))
+      })
+      .on('broadcast', { event: 'admit_rejected' }, ({ payload }) => {
+        if (payload.userId === currentUser.id) setSessionEnded(true)
+      })
+      .on('broadcast', { event: 'pin_message' }, ({ payload }) => {
+        if (payload.pinned) {
+          setPinnedMessage(payload.message as ChatMessage)
+          if (!doNotDisturb) playSound('ping')
+        } else {
+          setPinnedMessage(null)
+        }
+      })
+      .on('broadcast', { event: 'delete_message' }, ({ payload }) => {
+        setMessages(prev => prev.map(m => m.id === payload.messageId ? { ...m, deleted_at: new Date().toISOString() } : m))
+      })
       .on('broadcast', { event: 'nav_request' }, ({ payload }) => {
         if (currentUser.isHost) setNavRequest(payload as NavRequest)
       })
@@ -419,9 +515,70 @@ export default function StudyRoom({
   }
 
   async function closeRoom() {
-    await fetch(`/api/rooms/${roomCode}/close`, { method: 'POST' })
-    chRef.current?.send({ type: 'broadcast', event: 'room_closed', payload: {} })
+    const res = await fetch(`/api/rooms/${roomCode}/close`, { method: 'POST' })
+    const data = res.ok ? await res.json().catch(() => ({})) : {}
+    const summary = data.summary ?? null
+    if (summary) setSessionSummary(summary)
+    chRef.current?.send({ type: 'broadcast', event: 'room_closed', payload: { summary } })
     setSessionEnded(true)
+  }
+
+  async function admitMember(userId: string, approved: boolean) {
+    setPendingAdmissions(prev => prev.filter(p => p.userId !== userId))
+    await fetch(`/api/rooms/${roomCode}/admit`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ targetUserId: userId, approved }),
+    })
+    chRef.current?.send({ type: 'broadcast', event: approved ? 'admit_approved' : 'admit_rejected', payload: { userId } })
+    if (approved) {
+      setMembers(prev => prev.map(m => m.user_id === userId ? { ...m, join_status: 'approved' } : m))
+    }
+  }
+
+  async function pinMessage(msg: ChatMessage, pinned: boolean) {
+    await fetch(`/api/rooms/${roomCode}/pin`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messageId: msg.id, pinned }),
+    })
+    setPinnedMessage(pinned ? msg : null)
+    setMessages(prev => prev.map(m => ({ ...m, pinned: m.id === msg.id ? pinned : false })))
+    chRef.current?.send({ type: 'broadcast', event: 'pin_message', payload: { pinned, message: pinned ? msg : null } })
+  }
+
+  async function deleteMessage(messageId: string) {
+    await fetch(`/api/rooms/${roomCode}/delete-message`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messageId }),
+    })
+    setMessages(prev => prev.map(m => m.id === messageId ? { ...m, deleted_at: new Date().toISOString() } : m))
+    chRef.current?.send({ type: 'broadcast', event: 'delete_message', payload: { messageId } })
+  }
+
+  async function submitPassword() {
+    if (!passwordInput.trim()) return
+    setPasswordLoading(true)
+    setPasswordError('')
+    try {
+      const res = await fetch(`/api/rooms/${roomCode}/join`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: passwordInput }),
+      })
+      if (res.ok) {
+        window.location.reload()
+      } else {
+        const d = await res.json()
+        setPasswordError(d.error === 'WRONG_PASSWORD' ? 'Incorrect password.' : d.error ?? 'Failed to join.')
+      }
+    } finally {
+      setPasswordLoading(false)
+    }
+  }
+
+  function formatDuration(s: number) {
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60
+    if (h > 0) return `${h}h ${m}m`
+    if (m > 0) return `${m}m ${sec}s`
+    return `${sec}s`
   }
 
   async function transferHost(newHostId: string) {
@@ -447,25 +604,76 @@ export default function StudyRoom({
     setNavRequest(null)
   }
 
+  // ── PASSWORD GATE ─────────────────────────────────────────────────────────
+  if (needsPassword && !isPendingState) {
+    return (
+      <div style={{ minHeight: '100vh', background: '#191919', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
+        <div style={{ width: 'min(380px,100%)', background: 'rgba(30,28,26,0.98)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '16px', padding: '2rem' }}>
+          <p style={{ fontFamily: 'Georgia,serif', fontSize: '1.5rem', fontWeight: 300, color: '#F0EDE8', marginBottom: '0.4rem' }}>Password required</p>
+          <p style={{ fontSize: '13px', color: 'rgba(240,237,232,0.4)', marginBottom: '1.25rem' }}>This room is password-protected.</p>
+          <input
+            type="password" value={passwordInput} onChange={e => { setPasswordInput(e.target.value); setPasswordError('') }}
+            onKeyDown={e => { if (e.key === 'Enter') submitPassword() }}
+            placeholder="Enter room password…" autoFocus
+            style={{ width: '100%', background: 'rgba(255,255,255,0.04)', border: passwordError ? '1px solid rgba(244,124,124,0.5)' : '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', color: '#F0EDE8', fontSize: '14px', padding: '0.6rem 0.8rem', outline: 'none', boxSizing: 'border-box', marginBottom: '0.5rem' }}
+          />
+          {passwordError && <p style={{ fontSize: '12px', color: '#F47C7C', marginBottom: '0.75rem' }}>{passwordError}</p>}
+          <button onClick={submitPassword} disabled={passwordLoading} style={{ width: '100%', padding: '0.7rem', background: 'rgba(201,169,110,0.15)', border: '1px solid rgba(201,169,110,0.3)', borderRadius: '8px', color: '#C9A96E', fontSize: '14px', cursor: 'pointer' }}>
+            {passwordLoading ? 'Joining…' : 'Join Room →'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // ── PENDING APPROVAL SCREEN ───────────────────────────────────────────────
+  if (isPendingState) {
+    return (
+      <div style={{ minHeight: '100vh', background: '#191919', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem', padding: '2rem' }}>
+        <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#F7C97E', animation: 'pulse 1.5s ease-in-out infinite' }} />
+        <p style={{ fontFamily: 'Georgia,serif', fontSize: '1.75rem', fontWeight: 300, color: '#F0EDE8' }}>Waiting for approval</p>
+        <p style={{ fontSize: '14px', color: 'rgba(240,237,232,0.45)', textAlign: 'center', maxWidth: 320 }}>
+          The host will admit you shortly. Please stay on this page.
+        </p>
+        <style>{`@keyframes pulse { 0%,100%{opacity:0.4;transform:scale(1)} 50%{opacity:1;transform:scale(1.4)} }`}</style>
+      </div>
+    )
+  }
+
   // ── SESSION ENDED SCREEN ──────────────────────────────────────────────────
   if (sessionEnded) {
     return (
-      <div style={{
-        minHeight: '100vh', background: '#191919',
-        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-        gap: '1rem', padding: '2rem',
-      }}>
-        <p style={{ fontFamily: 'Georgia,serif', fontSize: '2rem', fontWeight: 300, color: '#F0EDE8' }}>
-          Session ended
-        </p>
-        <p style={{ fontSize: '14px', color: 'rgba(240,237,232,0.45)' }}>
-          This study room has closed.
-        </p>
-        <Link href="/" style={{
-          marginTop: '0.5rem', padding: '0.6rem 1.5rem',
-          background: 'rgba(201,169,110,0.15)', border: '1px solid rgba(201,169,110,0.3)',
-          borderRadius: '8px', color: '#C9A96E', textDecoration: 'none', fontSize: '14px',
-        }}>
+      <div style={{ minHeight: '100vh', background: '#191919', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem', padding: '2rem' }}>
+        {sessionSummary ? (
+          <div style={{ width: 'min(480px,100%)', background: 'rgba(30,28,26,0.98)', border: '1px solid rgba(201,169,110,0.2)', borderRadius: '20px', padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            <p style={{ fontFamily: 'Georgia,serif', fontSize: '1.5rem', fontWeight: 300, color: '#F0EDE8', marginBottom: '0.25rem' }}>Session complete</p>
+            <p style={{ fontFamily: 'monospace', fontSize: '11px', color: '#C9A96E', letterSpacing: '0.08em' }}>{sessionSummary.roomName}</p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+              {[
+                { label: 'Duration',      value: formatDuration(sessionSummary.durationSeconds) },
+                { label: 'Members',       value: String(sessionSummary.memberCount) },
+                { label: 'Messages',      value: String(sessionSummary.messageCount) },
+                { label: 'AI Explains',   value: String(sessionSummary.doubtsResolved) },
+              ].map(({ label, value }) => (
+                <div key={label} style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '10px', padding: '0.75rem' }}>
+                  <p style={{ fontFamily: 'monospace', fontSize: '10px', color: 'rgba(240,237,232,0.4)', marginBottom: '0.25rem' }}>{label}</p>
+                  <p style={{ fontSize: '20px', fontWeight: 600, color: '#F0EDE8' }}>{value}</p>
+                </div>
+              ))}
+            </div>
+            {sessionSummary.articleTitles?.length > 0 && (
+              <div>
+                <p style={{ fontFamily: 'monospace', fontSize: '10px', color: 'rgba(240,237,232,0.4)', marginBottom: '0.4rem' }}>ARTICLES COVERED</p>
+                {sessionSummary.articleTitles.map((t, i) => (
+                  <p key={i} style={{ fontSize: '12px', color: 'rgba(240,237,232,0.65)', padding: '2px 0' }}>• {t}</p>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <p style={{ fontFamily: 'Georgia,serif', fontSize: '2rem', fontWeight: 300, color: '#F0EDE8' }}>Session ended</p>
+        )}
+        <Link href="/" style={{ marginTop: '0.5rem', padding: '0.6rem 1.5rem', background: 'rgba(201,169,110,0.15)', border: '1px solid rgba(201,169,110,0.3)', borderRadius: '8px', color: '#C9A96E', textDecoration: 'none', fontSize: '14px' }}>
           Start a new session →
         </Link>
       </div>
@@ -490,10 +698,16 @@ export default function StudyRoom({
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
           <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#6FCF97', display: 'block' }} />
           <span style={{ fontFamily: 'Georgia,serif', fontSize: '14px', color: '#F0EDE8', fontWeight: 300, whiteSpace: 'nowrap' }}>
-            {activeMembers.find(m => m.is_host)?.display_name ?? 'Study'}&apos;s Room
+            {room.room_name ?? (activeMembers.find(m => m.is_host)?.display_name ?? 'Study') + "'s Room"}
           </span>
           <span style={{ fontFamily: 'monospace', fontSize: '10px', color: 'rgba(201,169,110,0.6)', letterSpacing: '0.1em' }}>
             {roomCode}
+          </span>
+          <span style={{ fontFamily: 'monospace', fontSize: '10px', color: 'rgba(240,237,232,0.3)' }}>
+            {activeMembers.filter(m => !m.kicked_at && !m.left_at && m.join_status !== 'pending').length}/{room.max_members}
+          </span>
+          <span style={{ fontFamily: 'monospace', fontSize: '10px', color: 'rgba(240,237,232,0.25)' }}>
+            {formatDuration(elapsedSeconds)}
           </span>
         </div>
 
@@ -562,6 +776,14 @@ export default function StudyRoom({
           </div>
         )}
 
+        {/* DND toggle */}
+        <button
+          onClick={() => setDoNotDisturb(d => !d)}
+          title={doNotDisturb ? 'Notifications muted' : 'Mute notifications'}
+          style={{ background: doNotDisturb ? 'rgba(255,255,255,0.05)' : 'none', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '6px', color: doNotDisturb ? 'rgba(240,237,232,0.3)' : 'rgba(240,237,232,0.5)', fontSize: '11px', padding: '3px 8px', cursor: 'pointer', flexShrink: 0 }}>
+          {doNotDisturb ? '🔕' : '🔔'}
+        </button>
+
         {/* Chat toggle */}
         <button onClick={() => setChatOpen(o => !o)} style={{
           background: chatOpen ? 'rgba(201,169,110,0.1)' : 'none',
@@ -616,6 +838,39 @@ export default function StudyRoom({
                 {entry.article_title}
               </button>
             </span>
+          ))}
+        </div>
+      )}
+
+      {/* ── TOPIC STRIP ───────────────────────────────────────────────────── */}
+      {room.topic && (
+        <div style={{ background: 'rgba(201,169,110,0.05)', borderBottom: '1px solid rgba(201,169,110,0.1)', padding: '0.3rem 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
+          <span style={{ fontSize: '10px', color: 'rgba(201,169,110,0.5)', fontFamily: 'monospace', flexShrink: 0 }}>TOPIC</span>
+          <span style={{ fontSize: '12px', color: 'rgba(240,237,232,0.6)', lineHeight: 1.4 }}>{room.topic}</span>
+        </div>
+      )}
+
+      {/* ── PINNED MESSAGE ────────────────────────────────────────────────── */}
+      {pinnedMessage && !pinnedMessage.deleted_at && (
+        <div style={{ background: 'rgba(201,169,110,0.07)', borderBottom: '1px solid rgba(201,169,110,0.15)', padding: '0.35rem 1rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexShrink: 0 }}>
+          <span style={{ fontSize: '10px', color: '#C9A96E', fontFamily: 'monospace', flexShrink: 0 }}>📌 PINNED</span>
+          <span style={{ fontSize: '12px', color: 'rgba(240,237,232,0.7)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pinnedMessage.content}</span>
+          {currentUser.isHost && (
+            <button onClick={() => pinMessage(pinnedMessage, false)} style={{ background: 'none', border: 'none', color: 'rgba(240,237,232,0.3)', cursor: 'pointer', fontSize: '12px', padding: 0 }}>✕</button>
+          )}
+        </div>
+      )}
+
+      {/* ── PENDING ADMISSIONS QUEUE ──────────────────────────────────────── */}
+      {currentUser.isHost && pendingAdmissions.length > 0 && (
+        <div style={{ position: 'fixed', top: 60, left: 16, zIndex: 300, display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+          {pendingAdmissions.map(p => (
+            <div key={p.userId} style={{ background: 'rgba(22,20,18,0.97)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '10px', padding: '0.6rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem', boxShadow: '0 4px 24px rgba(0,0,0,0.5)' }}>
+              <Avatar name={p.displayName} color={p.avatarColor} size={22} />
+              <span style={{ fontSize: '12px', color: '#F0EDE8', flex: 1 }}>{p.displayName}</span>
+              <button onClick={() => admitMember(p.userId, true)} style={{ background: 'rgba(111,207,151,0.12)', border: '1px solid rgba(111,207,151,0.25)', borderRadius: '6px', color: '#6FCF97', fontSize: '11px', padding: '2px 8px', cursor: 'pointer' }}>Admit</button>
+              <button onClick={() => admitMember(p.userId, false)} style={{ background: 'rgba(244,124,124,0.08)', border: '1px solid rgba(244,124,124,0.2)', borderRadius: '6px', color: '#F47C7C', fontSize: '11px', padding: '2px 8px', cursor: 'pointer' }}>Decline</button>
+            </div>
           ))}
         </div>
       )}
@@ -750,9 +1005,26 @@ export default function StudyRoom({
               </div>
             )}
 
+            {/* Chat / Doubts tabs */}
+            <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.05)', flexShrink: 0 }}>
+              {(['chat', 'doubts'] as const).map(tab => (
+                <button key={tab} onClick={() => { setActiveTab(tab); if (tab === 'doubts') setUnreadDoubts(0) }} style={{
+                  flex: 1, padding: '0.4rem', background: 'none', border: 'none',
+                  borderBottom: activeTab === tab ? '2px solid #C9A96E' : '2px solid transparent',
+                  color: activeTab === tab ? '#C9A96E' : 'rgba(240,237,232,0.4)',
+                  fontSize: '11px', fontFamily: 'monospace', letterSpacing: '0.06em', cursor: 'pointer',
+                  textTransform: 'uppercase', position: 'relative',
+                }}>
+                  {tab === 'chat' ? 'Chat' : `Doubts${unreadDoubts > 0 ? ` (${unreadDoubts})` : ''}`}
+                </button>
+              ))}
+            </div>
+
             {/* Messages */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '0.5rem 0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {messages.map(msg => <ChatBubble key={msg.id} msg={msg} currentUserId={currentUser.id} roomCode={roomCode} />)}
+              {messages
+                .filter(msg => activeTab === 'doubts' ? msg.kind === 'doubt' : msg.kind !== 'doubt')
+                .map(msg => <ChatBubble key={msg.id} msg={msg} currentUserId={currentUser.id} isHost={currentUser.isHost} roomCode={roomCode} onPin={pinMessage} onDelete={deleteMessage} />)}
               <div ref={chatBottomRef} />
             </div>
 
@@ -813,16 +1085,35 @@ export default function StudyRoom({
           borderRadius: '8px', padding: '0.3rem', display: 'flex', gap: '0.2rem',
           boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
         }}>
-          <button
-            onClick={triggerSharedExplain}
-            disabled={explainLoading}
-            style={{
-              background: 'rgba(201,169,110,0.15)', border: '1px solid rgba(201,169,110,0.2)',
-              borderRadius: '6px', color: '#C9A96E', fontSize: '12px', padding: '0.3rem 0.7rem',
-              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem',
-            }}>
-            {explainLoading ? '…' : '✦ Explain to room'}
-          </button>
+          {currentUser.isHost && (
+            <button
+              onClick={triggerSharedExplain}
+              disabled={explainLoading}
+              style={{ background: 'rgba(201,169,110,0.15)', border: '1px solid rgba(201,169,110,0.2)', borderRadius: '6px', color: '#C9A96E', fontSize: '12px', padding: '0.3rem 0.7rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+              {explainLoading ? '…' : '✦ Explain'}
+            </button>
+          )}
+          {!currentUser.isHost && !currentUser.isObserver && (
+            <button
+              onClick={async () => {
+                if (!selection) return
+                setSelection(null)
+                const res = await fetch(`/api/rooms/${roomCode}/message`, {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ content: selection.text, kind: 'doubt' }),
+                })
+                if (res.ok) {
+                  const msg = await res.json()
+                  setMessages(prev => [...prev, msg])
+                  chRef.current?.send({ type: 'broadcast', event: 'message', payload: msg })
+                  setActiveTab('doubts')
+                  setUnreadDoubts(0)
+                }
+              }}
+              style={{ background: 'rgba(127,183,247,0.12)', border: '1px solid rgba(127,183,247,0.2)', borderRadius: '6px', color: '#7EB8F7', fontSize: '12px', padding: '0.3rem 0.7rem', cursor: 'pointer' }}>
+              🙋 Ask
+            </button>
+          )}
           <button onClick={highlightOnly} style={{
             background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
             borderRadius: '6px', color: 'rgba(240,237,232,0.6)', fontSize: '12px',
@@ -1102,8 +1393,13 @@ export default function StudyRoom({
 }
 
 // ── Chat Bubble ───────────────────────────────────────────────────────────────
-function ChatBubble({ msg, currentUserId, roomCode }: { msg: ChatMessage; currentUserId: string; roomCode: string }) {
+function ChatBubble({ msg, currentUserId, isHost, roomCode, onPin, onDelete }: {
+  msg: ChatMessage; currentUserId: string; isHost: boolean; roomCode: string
+  onPin: (msg: ChatMessage, pinned: boolean) => void
+  onDelete: (id: string) => void
+}) {
   const [reported, setReported] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   if (msg.kind === 'system') {
     return (
@@ -1113,21 +1409,27 @@ function ChatBubble({ msg, currentUserId, roomCode }: { msg: ChatMessage; curren
     )
   }
 
+  if (msg.kind === 'doubt') {
+    return (
+      <div style={{ background: 'rgba(127,183,247,0.07)', border: '1px solid rgba(127,183,247,0.15)', borderRadius: '8px', padding: '0.5rem 0.6rem' }}>
+        <p style={{ fontSize: '10px', color: '#7EB8F7', fontFamily: 'monospace', marginBottom: '0.3rem' }}>🙋 {msg.display_name} asks</p>
+        <p style={{ fontSize: '12px', color: 'rgba(240,237,232,0.75)', lineHeight: 1.5, fontStyle: 'italic' }}>"{msg.content}"</p>
+      </div>
+    )
+  }
+
   if (msg.kind === 'explain') {
     let parsed: { selectedText: string; explanation: string } | null = null
     try { parsed = JSON.parse(msg.content) } catch { /* ignore */ }
     return (
-      <div style={{
-        background: 'rgba(201,169,110,0.06)', border: '1px solid rgba(201,169,110,0.12)',
-        borderRadius: '8px', padding: '0.5rem 0.6rem',
-      }}>
+      <div style={{ background: 'rgba(201,169,110,0.06)', border: '1px solid rgba(201,169,110,0.12)', borderRadius: '8px', padding: '0.5rem 0.6rem' }}>
         <p style={{ fontSize: '10px', color: '#C9A96E', fontFamily: 'monospace', marginBottom: '0.3rem' }}>
           ✦ {msg.display_name} explained
         </p>
         {parsed && (
           <>
             <p style={{ fontSize: '11px', color: 'rgba(240,237,232,0.4)', fontStyle: 'italic', marginBottom: '0.4rem', lineHeight: 1.4 }}>
-              "{parsed.selectedText.slice(0, 120)}{parsed.selectedText.length > 120 ? '…' : ''}"
+              &ldquo;{parsed.selectedText.slice(0, 120)}{parsed.selectedText.length > 120 ? '…' : ''}&rdquo;
             </p>
             <p style={{ fontSize: '12px', color: 'rgba(240,237,232,0.75)', lineHeight: 1.6 }}>
               {parsed.explanation}
@@ -1138,12 +1440,29 @@ function ChatBubble({ msg, currentUserId, roomCode }: { msg: ChatMessage; curren
     )
   }
 
+  if (msg.deleted_at) {
+    return (
+      <div style={{ padding: '0.25rem 0' }}>
+        <span style={{ fontSize: '11px', color: 'rgba(240,237,232,0.2)', fontStyle: 'italic' }}>Message deleted</span>
+      </div>
+    )
+  }
+
   const isMe = msg.user_id === currentUserId
+  const badge = getBadgeEmoji(msg.badge)
   return (
-    <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'flex-start', flexDirection: isMe ? 'row-reverse' : 'row' }}>
+    <div
+      style={{ display: 'flex', gap: '0.4rem', alignItems: 'flex-start', flexDirection: isMe ? 'row-reverse' : 'row', position: 'relative' }}
+      onContextMenu={e => { if (isHost) { e.preventDefault(); setMenuOpen(true) } }}
+    >
       <Avatar name={msg.display_name} color={msg.avatar_color} size={22} />
       <div style={{ maxWidth: '80%' }}>
-        {!isMe && <p style={{ fontSize: '10px', color: 'rgba(240,237,232,0.4)', marginBottom: '2px', fontFamily: 'monospace' }}>{msg.display_name}</p>}
+        {!isMe && (
+          <p style={{ fontSize: '10px', color: 'rgba(240,237,232,0.4)', marginBottom: '2px', fontFamily: 'monospace' }}>
+            {badge && <span style={{ marginRight: '3px' }}>{badge}</span>}{msg.display_name}
+            {msg.pinned && <span style={{ marginLeft: '4px', color: '#C9A96E' }}>📌</span>}
+          </p>
+        )}
         <div style={{
           background: isMe ? 'rgba(201,169,110,0.12)' : 'rgba(255,255,255,0.05)',
           border: `1px solid ${isMe ? 'rgba(201,169,110,0.15)' : 'rgba(255,255,255,0.06)'}`,
@@ -1152,7 +1471,7 @@ function ChatBubble({ msg, currentUserId, roomCode }: { msg: ChatMessage; curren
         }}>
           <p style={{ fontSize: '13px', color: '#F0EDE8', lineHeight: 1.5, wordBreak: 'break-word' }}>{msg.content}</p>
         </div>
-        {!isMe && !reported && (
+        {!isMe && !reported && !isHost && (
           <button onClick={async () => {
             await fetch(`/api/rooms/${roomCode}/report`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reportedUserId: msg.user_id, messageId: msg.id }) })
             setReported(true)
@@ -1162,6 +1481,18 @@ function ChatBubble({ msg, currentUserId, roomCode }: { msg: ChatMessage; curren
         )}
         {reported && <span style={{ fontSize: '9px', color: 'rgba(240,237,232,0.2)' }}>reported</span>}
       </div>
+      {/* Host context menu */}
+      {menuOpen && isHost && (
+        <div style={{ position: 'absolute', top: 0, left: isMe ? 'auto' : '100%', right: isMe ? '100%' : 'auto', zIndex: 200, background: 'rgba(22,20,18,0.97)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', overflow: 'hidden', minWidth: 120 }}
+          onMouseLeave={() => setMenuOpen(false)}>
+          <button onClick={() => { onPin(msg, !msg.pinned); setMenuOpen(false) }} style={{ display: 'block', width: '100%', padding: '0.4rem 0.75rem', background: 'none', border: 'none', color: '#F0EDE8', fontSize: '12px', cursor: 'pointer', textAlign: 'left' }}>
+            {msg.pinned ? 'Unpin' : '📌 Pin'}
+          </button>
+          <button onClick={() => { onDelete(msg.id); setMenuOpen(false) }} style={{ display: 'block', width: '100%', padding: '0.4rem 0.75rem', background: 'none', border: 'none', color: '#F47C7C', fontSize: '12px', cursor: 'pointer', textAlign: 'left' }}>
+            🗑 Delete
+          </button>
+        </div>
+      )}
     </div>
   )
 }

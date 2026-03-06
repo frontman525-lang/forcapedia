@@ -203,7 +203,13 @@ html.light .hb-mars-container {
   padding: 0;
 }
 
-html { scroll-behavior: smooth; }
+html {
+  scroll-behavior: smooth;
+  /* Prevent iOS/Android rubber-band overscroll from visually moving fixed backgrounds */
+  overscroll-behavior: none;
+  /* Stable viewport height — tells the browser the UI chrome won't resize content */
+  height: 100%;
+}
 
 body {
   background: var(--ink);
@@ -213,6 +219,7 @@ body {
   line-height: 1.7;
   overflow-x: hidden;
   overflow-anchor: none;
+  overscroll-behavior: none;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -226,6 +233,9 @@ body::before {
   pointer-events: none;
   z-index: 9999;
   opacity: 0.45;
+  /* GPU layer — composited separately so it never repaints during scroll */
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
 }
 
 ::selection {

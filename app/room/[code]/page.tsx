@@ -22,22 +22,16 @@ export default async function RoomPage({ params }: Props) {
 
   const admin = createAdminClient()
 
-  // ── Load room ──────────────────────────────────────────────────────────────
   const { data: room } = await admin
     .from('study_rooms')
     .select('*')
     .eq('code', upperCode)
     .single()
 
-  if (!room) {
-    return <RoomNotFound code={upperCode} />
-  }
+  if (!room) return <RoomNotFound code={upperCode} />
+  if (room.status !== 'active') return <RoomEnded code={upperCode} />
 
-  if (room.status !== 'active') {
-    return <RoomEnded code={upperCode} />
-  }
-
-  // ── Check / auto-join membership ───────────────────────────────────────────
+  // Check existing membership
   let { data: member } = await admin
     .from('room_members')
     .select('*')
@@ -45,12 +39,14 @@ export default async function RoomPage({ params }: Props) {
     .eq('user_id', user.id)
     .maybeSingle()
 
-  if (member?.kicked_at) {
-    return <RoomKicked />
-  }
+  if (member?.kicked_at) return <RoomKicked />
+  if (member?.join_status === 'rejected') return <RoomRejected />
 
-  if (!member) {
-    // Auto-join via API logic (inline here for SSR)
+  // New visitor — show password gate if needed (client-side handles)
+  const needsPassword = !!room.password_hash && !member
+
+  if (!member && !needsPassword) {
+    // No password: insert as pending directly
     const { data: usage } = await supabase.from('user_usage').select('tier').eq('user_id', user.id).single()
     const tier = usage?.tier ?? 'free'
 
@@ -58,14 +54,13 @@ export default async function RoomPage({ params }: Props) {
       .from('room_members')
       .select('id', { count: 'exact', head: true })
       .eq('room_id', room.id)
+      .eq('join_status', 'approved')
       .is('kicked_at', null)
       .is('left_at', null)
 
-    if ((activeCount ?? 0) >= room.max_members) {
-      return <RoomFull />
-    }
+    if ((activeCount ?? 0) >= room.max_members) return <RoomFull />
 
-    const { MEMBER_COLORS, isObserverTier } = await import('@/lib/rooms')
+    const { MEMBER_COLORS, isObserverTier, getDefaultBadge } = await import('@/lib/rooms')
     const colorIndex  = Math.min((activeCount ?? 0), MEMBER_COLORS.length - 1)
     const displayName = (user.user_metadata?.full_name as string | undefined)?.split(' ')[0]
       ?? user.email?.split('@')[0] ?? 'Guest'
@@ -77,50 +72,53 @@ export default async function RoomPage({ params }: Props) {
       avatar_color: MEMBER_COLORS[colorIndex],
       is_host:      false,
       is_observer:  isObserverTier(tier),
+      join_status:  'pending',
+      badge:        getDefaultBadge(tier),
     }).select().single()
 
-    if (newMember) {
-      member = newMember
-      await admin.from('room_messages').insert({
-        room_id: room.id, user_id: user.id,
-        display_name: displayName, avatar_color: MEMBER_COLORS[colorIndex],
-        content: `${displayName} joined the room`, kind: 'system',
-      })
-    }
+    if (newMember) member = newMember
   }
 
-  if (!member) return <RoomFull />
+  if (!member && !needsPassword) return <RoomFull />
 
-  // ── Load initial data ──────────────────────────────────────────────────────
-  const [membersRes, messagesRes, highlightsRes, navRes, articleRes] = await Promise.all([
+  // Load initial data
+  const [membersRes, messagesRes, highlightsRes, navRes, articleRes, usageRes] = await Promise.all([
     admin.from('room_members').select('*').eq('room_id', room.id).is('kicked_at', null).order('joined_at'),
-    admin.from('room_messages').select('*').eq('room_id', room.id).order('created_at', { ascending: false }).limit(20),
+    admin.from('room_messages').select('*').eq('room_id', room.id).order('created_at', { ascending: false }).limit(50),
     admin.from('room_highlights').select('*').eq('room_id', room.id).eq('article_slug', room.article_slug).order('created_at', { ascending: false }).limit(50),
     admin.from('room_navigation_history').select('*').eq('room_id', room.id).order('navigated_at').limit(20),
     admin.from('articles').select('slug, title, content, summary, category').eq('slug', room.article_slug).single(),
+    supabase.from('user_usage').select('tier').eq('user_id', user.id).single(),
   ])
-
-  const { data: usageForUser } = await supabase.from('user_usage').select('tier').eq('user_id', user.id).single()
 
   const currentUser = {
     id:          user.id,
-    name:        member.display_name,
-    avatarColor: member.avatar_color,
-    isHost:      member.is_host,
-    isObserver:  member.is_observer,
-    tier:        usageForUser?.tier ?? 'free',
+    name:        member?.display_name ?? (user.user_metadata?.full_name as string | undefined)?.split(' ')[0] ?? 'Guest',
+    avatarColor: member?.avatar_color ?? '#7EB8F7',
+    isHost:      member?.is_host ?? false,
+    isObserver:  member?.is_observer ?? true,
+    tier:        usageRes.data?.tier ?? 'free',
+    badge:       member?.badge ?? null,
   }
+
+  const isPending = member?.join_status === 'pending' && !currentUser.isHost
+
+  // Strip password_hash — never send it to the client
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { password_hash: _ph, ...safeRoom } = room as typeof room & { password_hash?: string }
 
   return (
     <StudyRoom
       roomCode={upperCode}
-      room={room}
+      room={safeRoom}
       initialMembers={membersRes.data ?? []}
       initialMessages={(messagesRes.data ?? []).reverse()}
       initialHighlights={highlightsRes.data ?? []}
       initialNavHistory={navRes.data ?? []}
       initialArticle={articleRes.data ?? { slug: room.article_slug, title: room.article_title, content: '', summary: '', category: '' }}
       currentUser={currentUser}
+      isPending={isPending}
+      needsPassword={needsPassword}
     />
   )
 }
@@ -151,6 +149,16 @@ function RoomKicked() {
     <div style={centreStyle}>
       <p style={titleStyle}>You were removed</p>
       <p style={subStyle}>The host has removed you from this room.</p>
+      <a href="/" style={linkStyle}>← Back to Forcapedia</a>
+    </div>
+  )
+}
+
+function RoomRejected() {
+  return (
+    <div style={centreStyle}>
+      <p style={titleStyle}>Request declined</p>
+      <p style={subStyle}>The host declined your request to join.</p>
       <a href="/" style={linkStyle}>← Back to Forcapedia</a>
     </div>
   )
