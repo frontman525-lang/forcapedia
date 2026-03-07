@@ -1,6 +1,7 @@
 // POST /api/rooms/[code]/pin
 // Host pins or unpins a message. Only one message can be pinned at a time.
 import { NextResponse } from 'next/server'
+import { broadcast, ch } from '@/lib/soketi/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
@@ -12,7 +13,7 @@ export async function POST(req: Request, { params }: Props) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { messageId, pinned } = await req.json().catch(() => ({}))
+  const { messageId, pinned, message: msgData, socketId } = await req.json().catch(() => ({}))
   if (!messageId || typeof pinned !== 'boolean') {
     return NextResponse.json({ error: 'messageId and pinned required' }, { status: 400 })
   }
@@ -41,6 +42,8 @@ export async function POST(req: Request, { params }: Props) {
     .update({ pinned })
     .eq('id', messageId)
     .eq('room_id', room.id)
+
+  await broadcast(ch.chat(code), 'pin_message', { pinned, message: pinned ? msgData : null }, socketId)
 
   return NextResponse.json({ ok: true })
 }

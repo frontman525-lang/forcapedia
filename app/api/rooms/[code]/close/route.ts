@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { saveAndCloseRoom } from '@/lib/rooms'
+import { broadcast, ch } from '@/lib/soketi/server'
 
 interface Props { params: Promise<{ code: string }> }
 
@@ -25,6 +26,8 @@ export async function POST(_req: Request, { params }: Props) {
   if (room.host_id !== user.id) return NextResponse.json({ error: 'Only the host can close the room.' }, { status: 403 })
 
   const summary = await saveAndCloseRoom(admin, room.id)
+
+  await broadcast(ch.admission(code), 'room_closed', { summary })
 
   return NextResponse.json({ ok: true, summary })
 }

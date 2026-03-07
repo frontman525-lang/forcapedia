@@ -22,7 +22,8 @@
       "Bash(ls -la \"c:\\\\Users\\\\shaik\\\\Desktop\\\\forcapedia\\\\app\\\\api\\\\rooms\"\" 2>/dev/null || echo \"rooms dir not found \")",
       "WebFetch(domain:groq.com)",
       "WebFetch(domain:ai.google.dev)",
-      "WebFetch(domain:api-docs.deepseek.com)"
+      "WebFetch(domain:api-docs.deepseek.com)",
+      "Bash(npm ls pusher pusher-js)"
     ]
   }
 }

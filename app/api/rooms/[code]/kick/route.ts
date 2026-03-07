@@ -3,6 +3,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { broadcast, ch } from '@/lib/soketi/server'
 
 interface Props { params: Promise<{ code: string }> }
 
@@ -31,6 +32,8 @@ export async function POST(req: Request, { params }: Props) {
     .update({ kicked_at: new Date().toISOString() })
     .eq('room_id', room.id)
     .eq('user_id', targetUserId)
+
+  await broadcast(ch.admission(code), 'member_kicked', { userId: targetUserId })
 
   return NextResponse.json({ ok: true })
 }

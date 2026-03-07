@@ -1,6 +1,7 @@
 // POST /api/rooms/[code]/transfer
 // Current host transfers host role to another active member.
 import { NextResponse } from 'next/server'
+import { broadcast, ch } from '@/lib/soketi/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
@@ -44,6 +45,11 @@ export async function POST(req: Request, { params }: Props) {
     admin.from('room_members').update({ is_host: false }).eq('room_id', room.id).eq('user_id', user.id),
     admin.from('room_members').update({ is_host: true }).eq('room_id', room.id).eq('user_id', newHostId),
   ])
+
+  await broadcast(ch.admission(code), 'host_transferred', {
+    newHostId,
+    newHostName: newHostMember.display_name,
+  })
 
   return NextResponse.json({ ok: true, newHostName: newHostMember.display_name })
 }

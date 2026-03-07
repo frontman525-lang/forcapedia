@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { MEMBER_COLORS, isObserverTier, getDefaultBadge, verifyRoomPassword } from '@/lib/rooms'
+import { broadcast, ch } from '@/lib/soketi/server'
 
 interface Props { params: Promise<{ code: string }> }
 
@@ -106,6 +107,13 @@ export async function POST(req: Request, { params }: Props) {
     join_status:  'pending',
     badge,
   }).select().single()
+
+  // Instantly notify the host via Soketi — fixes the 20-30s admission delay (BUG 1)
+  await broadcast(ch.admission(code), 'join_request', {
+    userId:      user.id,
+    displayName,
+    avatarColor,
+  })
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const { password_hash: _ph2, ...safeRoom2 } = room as typeof room & { password_hash?: string }

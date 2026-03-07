@@ -3,6 +3,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { broadcast, ch } from '@/lib/soketi/server'
 
 interface Props { params: Promise<{ code: string }> }
 
@@ -55,6 +56,17 @@ export async function POST(req: Request, { params }: Props) {
         kind:         'system',
       })
     }
+  }
+
+  // Broadcast result to all clients via Soketi
+  const admission = ch.admission(code)
+  if (approved && memberRow) {
+    // Tell everyone the member is now approved (their client reloads)
+    await broadcast(admission, 'admit_approved', { userId: targetUserId, member: memberRow })
+    // Add member to everyone's member list
+    await broadcast(admission, 'member_joined', { ...memberRow, user_id: targetUserId, join_status: 'approved', is_host: false })
+  } else if (!approved) {
+    await broadcast(admission, 'admit_rejected', { userId: targetUserId })
   }
 
   return NextResponse.json({ ok: true, status: newStatus })

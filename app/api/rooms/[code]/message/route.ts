@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { containsBlockedContent } from '@/lib/rooms'
+import { broadcast, ch } from '@/lib/soketi/server'
 
 interface Props { params: Promise<{ code: string }> }
 
@@ -13,7 +14,7 @@ export async function POST(req: Request, { params }: Props) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { content } = await req.json().catch(() => ({}))
+  const { content, socketId } = await req.json().catch(() => ({}))
   if (!content || typeof content !== 'string') {
     return NextResponse.json({ error: 'content required' }, { status: 400 })
   }
@@ -55,6 +56,10 @@ export async function POST(req: Request, { params }: Props) {
   }).select().single()
 
   if (error) return NextResponse.json({ error: 'Failed to save message.' }, { status: 500 })
+
+  // Broadcast to all other clients via Soketi (chat or doubts channel based on kind)
+  const channel = msg.kind === 'explain' ? ch.doubts(code) : ch.chat(code)
+  await broadcast(channel, 'message', msg, socketId)
 
   return NextResponse.json(msg)
 }

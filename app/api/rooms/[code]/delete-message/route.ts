@@ -1,6 +1,7 @@
 // POST /api/rooms/[code]/delete-message
 // Host soft-deletes a message (sets deleted_at). Broadcast event removes it from all clients.
 import { NextResponse } from 'next/server'
+import { broadcast, ch } from '@/lib/soketi/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
@@ -12,7 +13,7 @@ export async function POST(req: Request, { params }: Props) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { messageId } = await req.json().catch(() => ({}))
+  const { messageId, socketId } = await req.json().catch(() => ({}))
   if (!messageId) return NextResponse.json({ error: 'messageId required' }, { status: 400 })
 
   const admin = createAdminClient()
@@ -31,6 +32,8 @@ export async function POST(req: Request, { params }: Props) {
     .update({ deleted_at: new Date().toISOString() })
     .eq('id', messageId)
     .eq('room_id', room.id)
+
+  await broadcast(ch.chat(code), 'delete_message', { messageId }, socketId)
 
   return NextResponse.json({ ok: true })
 }

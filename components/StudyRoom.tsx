@@ -3,8 +3,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
-import type { RealtimeChannel } from '@supabase/supabase-js'
+import { getPusher, ch } from '@/lib/soketi/client'
+import type { PusherClient } from '@/lib/soketi/client'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Member {
@@ -101,8 +101,7 @@ export default function StudyRoom({
   isPending: isPendingProp = false, needsPassword = false,
 }: StudyRoomProps) {
   const router  = useRouter()
-  const supabase = createClient()
-  const chRef              = useRef<RealtimeChannel | null>(null)
+  const pusherRef          = useRef<PusherClient | null>(null)
   const articleRef         = useRef<HTMLDivElement>(null)
   const articleContainerRef = useRef<HTMLDivElement>(null)   // the scrollable article wrapper
   const isFollowingRef     = useRef(true)                    // mirror of isFollowing — avoids stale closures
@@ -148,7 +147,11 @@ export default function StudyRoom({
   const [doNotDisturb,       setDoNotDisturb]       = useState(false)
   const [sessionSummary,     setSessionSummary]     = useState<SessionSummary | null>(null)
   const [elapsedSeconds,     setElapsedSeconds]     = useState(0)
+  const [reconnecting,       setReconnecting]       = useState(false)
   const startTimeRef = useRef(Date.now())
+
+  /** Returns the current Pusher socket ID (to exclude self from broadcasts). */
+  const socketId = () => pusherRef.current?.connection.socket_id
 
   // ── Mobile detection ───────────────────────────────────────────────────────
   useEffect(() => {
@@ -164,130 +167,131 @@ export default function StudyRoom({
     return () => clearInterval(id)
   }, [])
 
-  // ── Broadcast join_request when pending ───────────────────────────────────
+  // ── Soketi Realtime ────────────────────────────────────────────────────────
   useEffect(() => {
-    if (!isPendingState) return
-    const timer = setTimeout(() => {
-      chRef.current?.send({ type: 'broadcast', event: 'join_request', payload: {
-        userId: currentUser.id, displayName: currentUser.name, avatarColor: currentUser.avatarColor,
-      }})
-    }, 1500)
-    return () => clearTimeout(timer)
-  }, [isPendingState]) // eslint-disable-line react-hooks/exhaustive-deps
+    const pusher = getPusher()
+    pusherRef.current = pusher
 
-  // ── Supabase Realtime ──────────────────────────────────────────────────────
-  useEffect(() => {
-    const channel = supabase.channel(`room:${roomCode}`, {
-      config: { presence: { key: currentUser.id }, broadcast: { self: false } },
-    })
-    chRef.current = channel
-
-    channel
-      .on('presence', { event: 'sync' }, () => {
-        const state = channel.presenceState<{ userId: string; displayName: string; avatarColor: string; isHost: boolean; isObserver: boolean }>()
-        const online = new Set(Object.keys(state))
-        setMembers(prev => prev.map(m => ({ ...m, _online: online.has(m.user_id) } as Member)))
-      })
-      .on('broadcast', { event: 'scroll' }, ({ payload }) => {
-        if (!isFollowingRef.current || currentUser.isHost) return
-        const container = articleContainerRef.current
-        if (!container) return
-        const { scrollHeight, clientHeight } = container
-        container.scrollTo({ top: payload.pct * (scrollHeight - clientHeight), behavior: 'smooth' })
-      })
-      .on('broadcast', { event: 'message' }, ({ payload }) => {
-        setMessages(prev => [...prev.slice(-19), payload as ChatMessage])
-        setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
-        if (!doNotDisturb) playSound('ping')
-      })
-      .on('broadcast', { event: 'reaction' }, ({ payload }) => {
-        const id = `${Date.now()}-${Math.random()}`
-        setReactions(prev => [...prev, { id, emoji: payload.emoji, x: payload.x, y: payload.y, label: payload.displayName }])
-        setTimeout(() => setReactions(prev => prev.filter(r => r.id !== id)), 3000)
-      })
-      .on('broadcast', { event: 'explain_shared' }, ({ payload }) => {
-        setSharedExplain(payload as SharedExplain)
-        setMessages(prev => [...prev.slice(-19), {
-          id: `explain-${Date.now()}`, user_id: payload.userId,
-          display_name: payload.triggeredBy, avatar_color: payload.color,
-          content: JSON.stringify({ selectedText: payload.selectedText, explanation: payload.explanation }),
-          kind: 'explain', created_at: new Date().toISOString(),
-        }])
-        setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
-        if (!doNotDisturb) playSound('chime')
-      })
-      .on('broadcast', { event: 'navigate' }, ({ payload }) => {
-        fetchArticle(payload.slug)
-        setNavNotif({ slug: payload.slug, title: payload.title })
-        setTimeout(() => setNavNotif(null), 8000)
-      })
-      .on('broadcast', { event: 'member_kicked' }, ({ payload }) => {
-        if (payload.userId === currentUser.id) { setSessionEnded(true); return }
-        setMembers(prev => prev.filter(m => m.user_id !== payload.userId))
-      })
-      .on('broadcast', { event: 'room_closed' }, ({ payload }) => {
-        if (payload?.summary) setSessionSummary(payload.summary as SessionSummary)
-        setSessionEnded(true)
-      })
-      .on('broadcast', { event: 'join_request' }, ({ payload }) => {
-        if (!currentUser.isHost) return
-        if (!doNotDisturb) playSound('alert')
-        setPendingAdmissions(prev => prev.some(p => p.userId === payload.userId) ? prev : [...prev, payload as PendingAdmission])
-      })
-      .on('broadcast', { event: 'admit_approved' }, ({ payload }) => {
-        if (payload.userId === currentUser.id) {
-          setIsPendingState(false)
-          window.location.reload()
-        }
-        setMembers(prev => prev.map(m => m.user_id === payload.userId ? { ...m, join_status: 'approved' } : m))
-      })
-      .on('broadcast', { event: 'admit_rejected' }, ({ payload }) => {
-        if (payload.userId === currentUser.id) setSessionEnded(true)
-      })
-      .on('broadcast', { event: 'pin_message' }, ({ payload }) => {
-        if (payload.pinned) {
-          setPinnedMessage(payload.message as ChatMessage)
-          if (!doNotDisturb) playSound('ping')
-        } else {
-          setPinnedMessage(null)
-        }
-      })
-      .on('broadcast', { event: 'delete_message' }, ({ payload }) => {
-        setMessages(prev => prev.map(m => m.id === payload.messageId ? { ...m, deleted_at: new Date().toISOString() } : m))
-      })
-      .on('broadcast', { event: 'nav_request' }, ({ payload }) => {
-        if (currentUser.isHost) setNavRequest(payload as NavRequest)
-      })
-      .on('broadcast', { event: 'nav_approved' }, ({ payload }) => {
-        fetchArticle(payload.slug)
-      })
-      .on('broadcast', { event: 'host_transferred' }, ({ payload }) => {
-        setMembers(prev => prev.map(m => ({
-          ...m,
-          is_host: m.user_id === payload.newHostId,
-        })))
-        if (payload.newHostId === currentUser.id) window.location.reload()
-      })
-      .on('broadcast', { event: 'member_joined' }, ({ payload }) => {
-        setMembers(prev => {
-          if (prev.some(m => m.user_id === payload.user_id)) return prev
-          return [...prev, payload as Member]
-        })
-      })
-
-    channel.subscribe(async (status) => {
-      if (status === 'SUBSCRIBED') {
-        await channel.track({
-          userId:      currentUser.id,
-          displayName: currentUser.name,
-          avatarColor: currentUser.avatarColor,
-          isHost:      currentUser.isHost,
-          isObserver:  currentUser.isObserver,
-        })
-      }
+    // Connection state → show reconnecting banner
+    pusher.connection.bind('state_change', ({ current }: { current: string }) => {
+      setReconnecting(current === 'connecting' || current === 'unavailable')
     })
 
-    return () => { supabase.removeChannel(channel) }
+    // Subscribe to all 5 room channels
+    const chatCh      = pusher.subscribe(ch.chat(roomCode))
+    const doubtsCh    = pusher.subscribe(ch.doubts(roomCode))
+    const articleCh   = pusher.subscribe(ch.article(roomCode))
+    const admissionCh = pusher.subscribe(ch.admission(roomCode))
+    const presenceCh  = pusher.subscribe(ch.presence(roomCode))
+
+    // ── Chat channel ─────────────────────────────────────────────────────────
+    chatCh.bind('message', (payload: ChatMessage) => {
+      setMessages(prev => [...prev.slice(-19), payload])
+      setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+      if (!doNotDisturb) playSound('ping')
+    })
+    chatCh.bind('reaction', (payload: { emoji: string; x: number; y: number; displayName: string }) => {
+      const id = `${Date.now()}-${Math.random()}`
+      setReactions(prev => [...prev, { id, emoji: payload.emoji, x: payload.x, y: payload.y, label: payload.displayName }])
+      setTimeout(() => setReactions(prev => prev.filter(r => r.id !== id)), 3000)
+    })
+    chatCh.bind('pin_message', (payload: { pinned: boolean; message: ChatMessage | null }) => {
+      setPinnedMessage(payload.pinned ? payload.message : null)
+      if (payload.pinned && !doNotDisturb) playSound('ping')
+    })
+    chatCh.bind('delete_message', (payload: { messageId: string }) => {
+      setMessages(prev => prev.map(m => m.id === payload.messageId ? { ...m, deleted_at: new Date().toISOString() } : m))
+    })
+
+    // ── Doubts channel ────────────────────────────────────────────────────────
+    doubtsCh.bind('message', (payload: ChatMessage) => {
+      setMessages(prev => [...prev.slice(-19), payload])
+      setUnreadDoubts(prev => prev + 1)
+      setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+      if (!doNotDisturb) playSound('chime')
+    })
+    doubtsCh.bind('explain_shared', (payload: SharedExplain & { userId: string }) => {
+      setSharedExplain(payload)
+      setMessages(prev => [...prev.slice(-19), {
+        id: `explain-${Date.now()}`, user_id: payload.userId,
+        display_name: payload.triggeredBy, avatar_color: payload.color,
+        content: JSON.stringify({ selectedText: payload.selectedText, explanation: payload.explanation }),
+        kind: 'explain', created_at: new Date().toISOString(),
+      }])
+      setUnreadDoubts(prev => prev + 1)
+      setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+      if (!doNotDisturb) playSound('chime')
+    })
+
+    // ── Article channel ───────────────────────────────────────────────────────
+    articleCh.bind('navigate', (payload: { slug: string; title: string }) => {
+      fetchArticle(payload.slug)
+      setNavNotif({ slug: payload.slug, title: payload.title })
+      setTimeout(() => setNavNotif(null), 8000)
+    })
+    articleCh.bind('nav_request', (payload: NavRequest) => {
+      if (currentUser.isHost) setNavRequest(payload)
+    })
+    articleCh.bind('scroll', (payload: { pct: number }) => {
+      if (!isFollowingRef.current || currentUser.isHost) return
+      const container = articleContainerRef.current
+      if (!container) return
+      const { scrollHeight, clientHeight } = container
+      container.scrollTo({ top: payload.pct * (scrollHeight - clientHeight), behavior: 'smooth' })
+    })
+
+    // ── Admission channel ─────────────────────────────────────────────────────
+    admissionCh.bind('join_request', (payload: PendingAdmission) => {
+      if (!currentUser.isHost) return
+      if (!doNotDisturb) playSound('alert')
+      setPendingAdmissions(prev => prev.some(p => p.userId === payload.userId) ? prev : [...prev, payload])
+    })
+    admissionCh.bind('admit_approved', (payload: { userId: string }) => {
+      if (payload.userId === currentUser.id) { setIsPendingState(false); window.location.reload(); return }
+      setMembers(prev => prev.map(m => m.user_id === payload.userId ? { ...m, join_status: 'approved' } : m))
+    })
+    admissionCh.bind('admit_rejected', (payload: { userId: string }) => {
+      if (payload.userId === currentUser.id) setSessionEnded(true)
+    })
+    admissionCh.bind('member_kicked', (payload: { userId: string }) => {
+      if (payload.userId === currentUser.id) { setSessionEnded(true); return }
+      setMembers(prev => prev.filter(m => m.user_id !== payload.userId))
+    })
+    admissionCh.bind('room_closed', (payload: { summary?: SessionSummary }) => {
+      if (payload?.summary) setSessionSummary(payload.summary)
+      setSessionEnded(true)
+    })
+    admissionCh.bind('host_transferred', (payload: { newHostId: string; newHostName: string }) => {
+      setMembers(prev => prev.map(m => ({ ...m, is_host: m.user_id === payload.newHostId })))
+      if (payload.newHostId === currentUser.id) window.location.reload()
+    })
+    admissionCh.bind('member_joined', (payload: Member) => {
+      setMembers(prev => prev.some(m => m.user_id === payload.user_id) ? prev : [...prev, payload])
+    })
+
+    // ── Presence channel ──────────────────────────────────────────────────────
+    presenceCh.bind('member_online', (payload: { userId: string }) => {
+      setMembers(prev => prev.map(m => m.user_id === payload.userId ? { ...m, _online: true } as Member : m))
+    })
+
+    // ── Heartbeat every 20s ───────────────────────────────────────────────────
+    const heartbeat = setInterval(() => {
+      fetch(`/api/rooms/${roomCode}/heartbeat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ socketId: pusher.connection.socket_id }),
+      }).catch(() => null)
+    }, 20_000)
+
+    return () => {
+      clearInterval(heartbeat)
+      pusher.connection.unbind('state_change')
+      pusher.unsubscribe(ch.chat(roomCode))
+      pusher.unsubscribe(ch.doubts(roomCode))
+      pusher.unsubscribe(ch.article(roomCode))
+      pusher.unsubscribe(ch.admission(roomCode))
+      pusher.unsubscribe(ch.presence(roomCode))
+    }
   }, [roomCode]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Scroll sync (host → members) ──────────────────────────────────────────
@@ -297,15 +301,19 @@ export default function StudyRoom({
     if (!container) return
     const onScroll = () => {
       const now = Date.now()
-      if (now - lastScrollBcast.current < 200) return
+      if (now - lastScrollBcast.current < 500) return
       lastScrollBcast.current = now
       const { scrollTop, scrollHeight, clientHeight } = container
-      chRef.current?.send({ type: 'broadcast', event: 'scroll',
-        payload: { pct: scrollHeight <= clientHeight ? 0 : scrollTop / (scrollHeight - clientHeight) } })
+      const pct = scrollHeight <= clientHeight ? 0 : scrollTop / (scrollHeight - clientHeight)
+      fetch(`/api/rooms/${roomCode}/scroll`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pct, socketId: socketId() }),
+      }).catch(() => null)
     }
     container.addEventListener('scroll', onScroll, { passive: true })
     return () => container.removeEventListener('scroll', onScroll)
-  }, [currentUser.isHost])
+  }, [currentUser.isHost]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Member scroll → disable follow ────────────────────────────────────────
   useEffect(() => {
@@ -380,12 +388,11 @@ export default function StudyRoom({
 
     const res = await fetch(`/api/rooms/${roomCode}/message`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: chatInput.trim() }),
+      body: JSON.stringify({ content: chatInput.trim(), socketId: socketId() }),
     })
     if (res.ok) {
       const msg = await res.json()
       setMessages(prev => [...prev.slice(-19), msg])
-      chRef.current?.send({ type: 'broadcast', event: 'message', payload: msg })
       setChatInput('')
     }
   }
@@ -396,7 +403,7 @@ export default function StudyRoom({
     setSelection(null)
     const res = await fetch(`/api/rooms/${roomCode}/highlight`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ selectedText: selection.text, withExplain: true }),
+      body: JSON.stringify({ selectedText: selection.text, withExplain: true, socketId: socketId() }),
     })
     if (res.ok) {
       const { explanation } = await res.json()
@@ -405,8 +412,6 @@ export default function StudyRoom({
           selectedText: selection.text, explanation,
           triggeredBy: currentUser.name, color: currentUser.avatarColor,
         }
-        chRef.current?.send({ type: 'broadcast', event: 'explain_shared',
-          payload: { ...payload, userId: currentUser.id } })
         setSharedExplain(payload)
         setTimeout(() => setSharedExplain(null), 30000)
       }
@@ -426,8 +431,10 @@ export default function StudyRoom({
   function sendReaction(emoji: string) {
     const x = 50 + Math.random() * 30
     const y = 50 + Math.random() * 30
-    chRef.current?.send({ type: 'broadcast', event: 'reaction',
-      payload: { emoji, x, y, displayName: currentUser.name } })
+    fetch(`/api/rooms/${roomCode}/reaction`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ emoji, x, y, displayName: currentUser.name, socketId: socketId() }),
+    })
     const id = `${Date.now()}-${Math.random()}`
     setReactions(prev => [...prev, { id, emoji, x, y, label: currentUser.name }])
     setTimeout(() => setReactions(prev => prev.filter(r => r.id !== id)), 3000)
@@ -477,13 +484,11 @@ export default function StudyRoom({
       }])
       articleContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
 
-      // Record + broadcast navigation
+      // Record + broadcast navigation (server triggers Soketi, excludes host via socketId)
       await fetch(`/api/rooms/${roomCode}/navigate`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ articleSlug: artData.slug, articleTitle: artData.title }),
+        body: JSON.stringify({ articleSlug: artData.slug, articleTitle: artData.title, socketId: socketId() }),
       })
-      chRef.current?.send({ type: 'broadcast', event: 'navigate',
-        payload: { slug: artData.slug, title: artData.title } })
 
       setSearchOpen(false)
       setSearchQ('')
@@ -499,10 +504,9 @@ export default function StudyRoom({
     setSearchOpen(false)
     await fetch(`/api/rooms/${roomCode}/navigate`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ articleSlug: slug, articleTitle: title }),
+      body: JSON.stringify({ articleSlug: slug, articleTitle: title, socketId: socketId() }),
     })
     fetchArticle(slug)
-    chRef.current?.send({ type: 'broadcast', event: 'navigate', payload: { slug, title } })
   }
 
   async function kickMember(targetUserId: string) {
@@ -510,7 +514,6 @@ export default function StudyRoom({
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ targetUserId }),
     })
-    chRef.current?.send({ type: 'broadcast', event: 'member_kicked', payload: { userId: targetUserId } })
     setMembers(prev => prev.filter(m => m.user_id !== targetUserId))
   }
 
@@ -519,7 +522,6 @@ export default function StudyRoom({
     const data = res.ok ? await res.json().catch(() => ({})) : {}
     const summary = data.summary ?? null
     if (summary) setSessionSummary(summary)
-    chRef.current?.send({ type: 'broadcast', event: 'room_closed', payload: { summary } })
     setSessionEnded(true)
   }
 
@@ -529,7 +531,6 @@ export default function StudyRoom({
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ targetUserId: userId, approved }),
     })
-    chRef.current?.send({ type: 'broadcast', event: approved ? 'admit_approved' : 'admit_rejected', payload: { userId } })
     if (approved) {
       setMembers(prev => prev.map(m => m.user_id === userId ? { ...m, join_status: 'approved' } : m))
     }
@@ -538,20 +539,18 @@ export default function StudyRoom({
   async function pinMessage(msg: ChatMessage, pinned: boolean) {
     await fetch(`/api/rooms/${roomCode}/pin`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messageId: msg.id, pinned }),
+      body: JSON.stringify({ messageId: msg.id, pinned, message: pinned ? msg : null, socketId: socketId() }),
     })
     setPinnedMessage(pinned ? msg : null)
     setMessages(prev => prev.map(m => ({ ...m, pinned: m.id === msg.id ? pinned : false })))
-    chRef.current?.send({ type: 'broadcast', event: 'pin_message', payload: { pinned, message: pinned ? msg : null } })
   }
 
   async function deleteMessage(messageId: string) {
     await fetch(`/api/rooms/${roomCode}/delete-message`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messageId }),
+      body: JSON.stringify({ messageId, socketId: socketId() }),
     })
     setMessages(prev => prev.map(m => m.id === messageId ? { ...m, deleted_at: new Date().toISOString() } : m))
-    chRef.current?.send({ type: 'broadcast', event: 'delete_message', payload: { messageId } })
   }
 
   async function submitPassword() {
@@ -587,9 +586,6 @@ export default function StudyRoom({
       body: JSON.stringify({ newHostId }),
     })
     if (res.ok) {
-      const { newHostName } = await res.json()
-      chRef.current?.send({ type: 'broadcast', event: 'host_transferred',
-        payload: { newHostId, newHostName } })
       setHostLeaveModal(false)
       await fetch(`/api/rooms/${roomCode}/leave`, { method: 'POST' })
       router.push('/')
@@ -598,9 +594,7 @@ export default function StudyRoom({
 
   function approveNavRequest() {
     if (!navRequest) return
-    chRef.current?.send({ type: 'broadcast', event: 'nav_approved',
-      payload: { slug: navRequest.targetSlug, title: navRequest.targetTitle } })
-    fetchArticle(navRequest.targetSlug)
+    hostNavigateTo(navRequest.targetSlug, navRequest.targetTitle)
     setNavRequest(null)
   }
 
@@ -686,6 +680,19 @@ export default function StudyRoom({
   // ── RENDER ────────────────────────────────────────────────────────────────
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#191919', overflow: 'hidden' }}>
+
+      {/* ── RECONNECTING BANNER ───────────────────────────────────────────── */}
+      {reconnecting && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999,
+          background: 'rgba(201,169,110,0.15)', borderBottom: '1px solid rgba(201,169,110,0.3)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+          padding: '6px 1rem', backdropFilter: 'blur(8px)',
+        }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#C9A96E', display: 'inline-block', animation: 'pulse 1.2s ease-in-out infinite' }} />
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: '#C9A96E', letterSpacing: '0.06em' }}>Reconnecting…</span>
+        </div>
+      )}
 
       {/* ── ROOM BAR ──────────────────────────────────────────────────────── */}
       <header style={{
@@ -822,11 +829,15 @@ export default function StudyRoom({
                   if (currentUser.isHost) {
                     hostNavigateTo(entry.article_slug, entry.article_title)
                   } else {
-                    chRef.current?.send({ type: 'broadcast', event: 'nav_request', payload: {
-                      requestId: Date.now().toString(), userId: currentUser.id,
-                      displayName: currentUser.name,
-                      targetSlug: entry.article_slug, targetTitle: entry.article_title,
-                    }})
+                    fetch(`/api/rooms/${roomCode}/nav-request`, {
+                      method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        requestId: Date.now().toString(), userId: currentUser.id,
+                        displayName: currentUser.name,
+                        targetSlug: entry.article_slug, targetTitle: entry.article_title,
+                        socketId: socketId(),
+                      }),
+                    })
                   }
                 }}
                 style={{
@@ -1100,12 +1111,11 @@ export default function StudyRoom({
                 setSelection(null)
                 const res = await fetch(`/api/rooms/${roomCode}/message`, {
                   method: 'POST', headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ content: selection.text, kind: 'doubt' }),
+                  body: JSON.stringify({ content: selection.text, kind: 'doubt', socketId: socketId() }),
                 })
                 if (res.ok) {
                   const msg = await res.json()
                   setMessages(prev => [...prev, msg])
-                  chRef.current?.send({ type: 'broadcast', event: 'message', payload: msg })
                   setActiveTab('doubts')
                   setUnreadDoubts(0)
                 }

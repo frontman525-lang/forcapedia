@@ -1,6 +1,7 @@
 // POST /api/rooms/[code]/highlight
 // Member highlights text and optionally triggers shared AI explain.
 // The explain uses the HOST's token allowance.
+import { broadcast, ch } from '@/lib/soketi/server'
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
@@ -21,7 +22,7 @@ export async function POST(req: Request, { params }: Props) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { selectedText, withExplain = false } = await req.json().catch(() => ({}))
+  const { selectedText, withExplain = false, socketId } = await req.json().catch(() => ({}))
   if (!selectedText || typeof selectedText !== 'string') {
     return NextResponse.json({ error: 'selectedText required' }, { status: 400 })
   }
@@ -123,6 +124,17 @@ export async function POST(req: Request, { params }: Props) {
       content:      JSON.stringify({ selectedText: selectedText.slice(0, 300), explanation }),
       kind:         'explain',
     })
+  }
+
+  // Broadcast explain_shared to doubts channel so all members see it
+  if (explanation) {
+    await broadcast(ch.doubts(code), 'explain_shared', {
+      selectedText: selectedText.slice(0, 300),
+      explanation,
+      userId:      user.id,
+      triggeredBy: member.display_name,
+      color:       member.avatar_color,
+    }, socketId)
   }
 
   return NextResponse.json({ highlight, explanation })

@@ -3,6 +3,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { broadcast, ch } from '@/lib/soketi/server'
 
 interface Props { params: Promise<{ code: string }> }
 
@@ -12,7 +13,7 @@ export async function POST(req: Request, { params }: Props) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { articleSlug, articleTitle } = await req.json().catch(() => ({}))
+  const { articleSlug, articleTitle, socketId } = await req.json().catch(() => ({}))
   if (!articleSlug || !articleTitle) {
     return NextResponse.json({ error: 'articleSlug and articleTitle required' }, { status: 400 })
   }
@@ -50,6 +51,9 @@ export async function POST(req: Request, { params }: Props) {
       kind:         'system',
     }),
   ])
+
+  // Broadcast to all other members (host excluded via socketId)
+  await broadcast(ch.article(code), 'navigate', { slug: articleSlug, title: articleTitle }, socketId)
 
   return NextResponse.json({ ok: true })
 }
