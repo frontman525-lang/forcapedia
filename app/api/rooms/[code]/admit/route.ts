@@ -55,17 +55,15 @@ export async function POST(req: Request, { params }: Props) {
         content:      `${memberRow.display_name} joined the room`,
         kind:         'system',
       })
-    }
-  }
 
-  // Broadcast result to all clients via Soketi
-  const admission = ch.admission(code)
-  if (approved && memberRow) {
-    // Tell everyone the member is now approved (their client reloads)
-    await broadcast(admission, 'admit_approved', { userId: targetUserId, member: memberRow })
-    // Add member to everyone's member list
-    await broadcast(admission, 'member_joined', { ...memberRow, user_id: targetUserId, join_status: 'approved', is_host: false })
+      // Broadcast approval + member info to all clients
+      const admission = ch.admission(code)
+      await broadcast(admission, 'admit_approved', { userId: targetUserId, member: memberRow })
+      await broadcast(admission, 'member_joined', { ...memberRow, user_id: targetUserId, join_status: 'approved', is_host: false })
+    }
   } else if (!approved) {
+    // Broadcast rejection
+    const admission = ch.admission(code)
     await broadcast(admission, 'admit_rejected', { userId: targetUserId })
   }
 
