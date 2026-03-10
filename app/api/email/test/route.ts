@@ -72,6 +72,7 @@ export async function GET(request: Request) {
         planPrice:   '$7.99/month',
         tokens:      '2,000,000',
         orderId:     'TEST-ORDER-001',
+        invoiceNumber: 'INV-2026-00001',
         date:        new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
         nextBilling: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
                        .toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
