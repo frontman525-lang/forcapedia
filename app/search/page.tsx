@@ -292,8 +292,13 @@ function SearchContent() {
         })
 
         if (res.ok) {
-          const { slug } = await res.json()
-          router.push(`/article/${slug}`)
+          const data = await res.json()
+          if (data.streaming) {
+            // Store topic so ArticleGenerator can read it — keeps the URL clean
+            try { sessionStorage.setItem(`pending:${data.slug}`, data.topic) } catch { /* private mode */ }
+          }
+          // Always navigate to the clean article URL — no ?topic= query params
+          router.push(`/article/${data.slug}`)
           return
         }
 

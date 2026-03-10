@@ -17,9 +17,9 @@ export type PlanKey =
   | 'tier2_yearly'
 
 // Extend this union when you add a new provider
-export type PaymentProviderName = 'cashfree' | 'paypal' // | 'stripe'
+export type PaymentProviderName = 'cashfree' | 'paypal' | 'razorpay'
 
-export type CheckoutMode = 'sdk' | 'redirect'
+export type CheckoutMode = 'sdk' | 'redirect' | 'razorpay_popup'
 
 // ── What the subscribe route sends to the provider ───────────────────────────
 export interface CreateSubscriptionParams {
@@ -57,13 +57,15 @@ export type NormalizedEventType =
 // ── Normalized webhook event ──────────────────────────────────────────────────
 // Sent to processWebhookEvent() regardless of which provider emitted it.
 export interface NormalizedWebhookEvent {
-  type:          NormalizedEventType
-  providerSubId: string       // Provider's subscription ID — used to look up the DB row
-  userId?:       string       // Our internal user ID (available in some providers, not all)
-  amount?:       number
-  currency?:     string
-  paymentId?:    string       // Provider payment/charge ID (for receipts, dedup)
-  raw:           unknown      // Original payload — stored verbatim in payment_events for audit
+  type:              NormalizedEventType
+  providerSubId:     string       // Provider's subscription ID — used to look up the DB row
+  eventId?:          string       // Provider's unique event ID — used for idempotency dedup
+  userId?:           string       // Our internal user ID (available in some providers, not all)
+  amount?:           number
+  currency?:         string
+  paymentId?:        string       // Provider payment/charge ID (for receipts, dedup)
+  currentPeriodEnd?: string       // ISO timestamp — used to store renewal date in DB
+  raw:               unknown      // Original payload — stored verbatim in payment_events for audit
 }
 
 // ── Result of webhook verification ──────────────────────────────────────────
@@ -87,8 +89,12 @@ export interface PaymentProvider {
   /**
    * Cancels a subscription.
    * The provider typically fires a webhook (subscription.cancelled) when done.
+   *
+   * options.atPeriodEnd = true  → cancel at end of current billing period (user retains access)
+   * options.atPeriodEnd = false → cancel immediately (used for upgrade flows)
+   * Providers that do not support this distinction may ignore options.
    */
-  cancelSubscription(providerSubId: string): Promise<void>
+  cancelSubscription(providerSubId: string, options?: { atPeriodEnd?: boolean }): Promise<void>
 
   /**
    * Verifies the inbound webhook signature.

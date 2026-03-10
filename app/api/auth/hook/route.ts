@@ -23,8 +23,9 @@ import { createElement }    from 'react'
 import { render }           from '@react-email/render'
 import { resend }           from '@/lib/email/client'
 import { sendViaZeptoMail } from '@/lib/email/send'
-import { ConfirmEmail }     from '@/lib/email/templates/ConfirmEmail'
+import { ConfirmEmail }      from '@/lib/email/templates/ConfirmEmail'
 import { ResetPasswordEmail } from '@/lib/email/templates/ResetPasswordEmail'
+import { OtpEmail }           from '@/lib/email/templates/OtpEmail'
 
 const SITE    = process.env.NEXT_PUBLIC_SITE_URL    ?? 'https://forcapedia.com'
 const FROM    = process.env.EMAIL_FROM_ADDRESS       ?? 'Forcapedia <hello@forcapedia.com>'
@@ -143,18 +144,26 @@ export async function POST(req: Request) {
   let html:    string
   let text:    string
 
-  if (email_action_type === 'recovery') {
-    // ── Reset password email ────────────────────────────────────────────────
+  if (email_action_type === 'magiclink' || email_action_type === 'signup') {
+    // ── OTP code email ───────────────────────────────────────────────────────
+    // magiclink = forgot-password flow (signInWithOtp, shouldCreateUser: false)
+    // signup    = new account confirmation (signUp)
+    // plainToken is the 6-digit code the user enters on the page.
+    subject = `Your Forcapedia verification code: ${plainToken}`
+    ;[html, text] = await Promise.all([
+      render(createElement(OtpEmail, { otp: plainToken, email: userEmail })),
+      render(createElement(OtpEmail, { otp: plainToken, email: userEmail }), { plainText: true }),
+    ])
+  } else if (email_action_type === 'recovery') {
+    // ── Reset password link email ────────────────────────────────────────────
     subject = 'Reset your Forcapedia password'
     ;[html, text] = await Promise.all([
       render(createElement(ResetPasswordEmail, { resetLink: actionUrl, email: userEmail })),
       render(createElement(ResetPasswordEmail, { resetLink: actionUrl, email: userEmail }), { plainText: true }),
     ])
   } else {
-    // ── Confirm email (signup, email_change, magic_link, etc.) ──────────────
-    subject = email_action_type === 'signup'
-      ? 'Confirm your Forcapedia account'
-      : 'Confirm your new email address — Forcapedia'
+    // ── Confirm email (email_change_*, etc.) ─────────────────────────────────
+    subject = 'Confirm your new email address — Forcapedia'
     ;[html, text] = await Promise.all([
       render(createElement(ConfirmEmail, { confirmLink: actionUrl, email: userEmail })),
       render(createElement(ConfirmEmail, { confirmLink: actionUrl, email: userEmail }), { plainText: true }),

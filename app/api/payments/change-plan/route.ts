@@ -17,8 +17,9 @@ import { createClient }      from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getPaymentProvider } from '@/lib/payments'
 import type { PaymentProviderName, PlanKey } from '@/lib/payments/types'
-import { getPlan }           from '@/lib/cashfree/plans'
-import { PAYPAL_PLAN_AMOUNTS } from '@/lib/payments/providers/paypal/plans'
+import { getPlan }                 from '@/lib/cashfree/plans'
+import { PAYPAL_PLAN_AMOUNTS }     from '@/lib/payments/providers/paypal/plans'
+import { RAZORPAY_PLAN_AMOUNTS }   from '@/lib/razorpay/plans'
 
 const TIER_LEVEL:  Record<string, number> = { free: 0, tier1: 1, tier2: 2 }
 const CYCLE_LEVEL: Record<string, number> = { monthly: 0, yearly: 1 }
@@ -65,7 +66,11 @@ export async function POST(req: Request) {
   if (!plan) return NextResponse.json({ error: 'Invalid plan selection' }, { status: 400 })
 
   const newPlanKey = `${newTier}_${newCycle}` as PlanKey
-  const newProviderName: PaymentProviderName = rawProvider === 'paypal' ? 'paypal' : 'cashfree'
+  const newProviderName: PaymentProviderName =
+    rawProvider === 'paypal'   ? 'paypal'   :
+    rawProvider === 'cashfree' ? 'cashfree' :
+    rawProvider === 'razorpay' ? 'razorpay' :
+    'razorpay'
 
   // ── Find current active subscription ──────────────────────────────────────
   const { data: rows } = await supabase
@@ -95,24 +100,25 @@ export async function POST(req: Request) {
   const isUpgrade = newTierLevel > currentTierLevel ||
     (newTierLevel === currentTierLevel && newCycleLevel > currentCycleLevel)
 
-  // ── Cancel current subscription ───────────────────────────────────────────
   const admin           = createAdminClient()
   const currentProvider = getPaymentProvider(
     ((currentSub.payment_provider as string | null) ?? 'cashfree') as PaymentProviderName,
   )
 
-  try {
-    await currentProvider.cancelSubscription(providerSubId)
-  } catch (err) {
-    console.error('[change-plan] cancel error:', err)
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : 'Failed to cancel current plan.' },
-      { status: 502 },
-    )
-  }
-
   // ── Downgrade: cancel at period end — user re-subscribes manually after ──
   if (!isUpgrade) {
+    try {
+      // atPeriodEnd: true — Razorpay fires subscription.cancelled at cycle end;
+      // other providers: same semantics managed by their own period-end logic.
+      await currentProvider.cancelSubscription(providerSubId, { atPeriodEnd: true })
+    } catch (err) {
+      console.error('[change-plan] downgrade cancel error:', err)
+      return NextResponse.json(
+        { error: err instanceof Error ? err.message : 'Failed to schedule plan downgrade.' },
+        { status: 502 },
+      )
+    }
+
     await admin
       .from('subscriptions')
       .update({ cancel_at_period_end: true, updated_at: new Date().toISOString() })
@@ -122,6 +128,17 @@ export async function POST(req: Request) {
   }
 
   // ── Upgrade: cancel immediately + start new subscription ──────────────────
+  try {
+    // atPeriodEnd: false — cancel now so the new plan can start immediately.
+    await currentProvider.cancelSubscription(providerSubId, { atPeriodEnd: false })
+  } catch (err) {
+    console.error('[change-plan] upgrade cancel error:', err)
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : 'Failed to cancel current plan.' },
+      { status: 502 },
+    )
+  }
+
   await admin
     .from('subscriptions')
     .update({
@@ -136,13 +153,14 @@ export async function POST(req: Request) {
   const siteUrl   = process.env.NEXT_PUBLIC_SITE_URL ?? origin
   const returnUrl = `${origin}/payment/success?plan=${newPlanKey}`
   const cancelUrl = `${origin}/pricing`
-  const notifyUrl = newProviderName === 'paypal'
-    ? `${siteUrl}/api/payments/webhook/paypal`
-    : `${siteUrl}/api/payments/webhook`
+  const notifyUrl =
+    newProviderName === 'paypal'   ? `${siteUrl}/api/payments/webhook/paypal`   :
+    newProviderName === 'razorpay' ? `${siteUrl}/api/payments/webhook/razorpay` :
+    `${siteUrl}/api/payments/webhook`
 
   // ── Calculate proration credit (unused days on old plan) ─────────────────
-  // Only prorated when upgrading with PayPal (Cashfree doesn't support inline
-  // billing cycle overrides — skip for Cashfree new subscriptions).
+  // Only prorated when upgrading with PayPal (PayPal supports inline billing
+  // cycle overrides). Razorpay and Cashfree: no automatic proration.
   const newPlanAmount = PAYPAL_PLAN_AMOUNTS[newPlanKey]
   let firstPaymentAmount: number | undefined
   if (newProviderName === 'paypal') {
@@ -181,8 +199,11 @@ export async function POST(req: Request) {
   }
 
   // Persist new pending subscription
-  const amount   = newProviderName === 'paypal' ? PAYPAL_PLAN_AMOUNTS[newPlanKey] : plan.plan_amount
-  const currency = newProviderName === 'paypal' ? 'USD'                           : plan.plan_currency
+  const amount   =
+    newProviderName === 'paypal'   ? PAYPAL_PLAN_AMOUNTS[newPlanKey]   :
+    newProviderName === 'razorpay' ? RAZORPAY_PLAN_AMOUNTS[newPlanKey] :
+    plan.plan_amount
+  const currency = newProviderName === 'paypal' ? 'USD' : 'INR'
 
   await admin.from('subscriptions').insert({
     user_id:          user.id,
@@ -205,6 +226,16 @@ export async function POST(req: Request) {
 
   if (result.checkoutMode === 'redirect') {
     return NextResponse.json({ checkoutMode: 'redirect', approvalUrl: result.approvalUrl })
+  }
+
+  if (result.checkoutMode === 'razorpay_popup') {
+    const keyId = process.env.RAZORPAY_KEY_ID
+    if (!keyId) return NextResponse.json({ error: 'Payment gateway not configured.' }, { status: 500 })
+    return NextResponse.json({
+      checkoutMode:   'razorpay_popup',
+      subscriptionId: result.providerSubId,
+      keyId,
+    })
   }
 
   return NextResponse.json({ error: 'Unexpected checkout mode from provider' }, { status: 500 })

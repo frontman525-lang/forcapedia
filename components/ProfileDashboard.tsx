@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import type { User } from '@supabase/supabase-js'
+import { BadgeSVG, AvatarWithBadge } from '@/components/BadgeMarker'
+import { TIER1_BADGES, TIER2_BADGES } from '@/lib/rooms'
 
 interface SessionRecord {
   id: string
@@ -45,7 +47,7 @@ type Tab = 'account' | 'plan' | 'sessions' | 'data'
 
 interface Props {
   user: User
-  usage: { tier: string; tokens_used: number; period_start: string } | null
+  usage: { tier: string; tokens_used: number; period_start: string; preferred_badge?: string | null } | null
 }
 
 export default function ProfileDashboard({ user, usage }: Props) {
@@ -94,6 +96,14 @@ export default function ProfileDashboard({ user, usage }: Props) {
   const [downloading,    setDownloading]    = useState(false)
   const [downloadError,  setDownloadError]  = useState<string | null>(null)
 
+  // Live usage — overrides server-rendered prop with fresh data on mount
+  const [liveUsage, setLiveUsage] = useState<{ tier: string; tokens_used: number; period_start: string } | null>(null)
+
+  // Badge selection
+  const [selectedBadge, setSelectedBadge] = useState<string | null>(usage?.preferred_badge ?? null)
+  const [savingBadge,   setSavingBadge]   = useState(false)
+  const [badgeSaved,    setBadgeSaved]    = useState(false)
+
   // Responsive
   const [isMobile, setIsMobile] = useState(false)
 
@@ -136,13 +146,25 @@ export default function ProfileDashboard({ user, usage }: Props) {
       .catch(() => setSessionsLoading(false))
   }, [tab])
 
+  // Fetch fresh usage data on mount so tier display is never stale
+  useEffect(() => {
+    fetch('/api/payments/status')
+      .then(r => r.json())
+      .then(data => { if (data?.usage) setLiveUsage(data.usage) })
+      .catch(() => {})
+  }, [])
+
   // Load subscription + billing history when plan tab opens
   useEffect(() => {
     if (tab !== 'plan') return
     setSubLoading(true)
     fetch('/api/payments/status')
       .then(r => r.json())
-      .then(data => { setSub(data?.subscription ?? null); setSubLoading(false) })
+      .then(data => {
+        setSub(data?.subscription ?? null)
+        if (data?.usage) setLiveUsage(data.usage)
+        setSubLoading(false)
+      })
       .catch(() => setSubLoading(false))
 
     setBillingHistoryLoading(true)
@@ -152,15 +174,16 @@ export default function ProfileDashboard({ user, usage }: Props) {
       .catch(() => setBillingHistoryLoading(false))
   }, [tab])
 
-  // Derived values
+  // Derived values — liveUsage (from mount fetch) wins over server-rendered prop
+  const effectiveUsage = liveUsage ?? usage
   const initials   = displayName
     ? displayName.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()
     : (user.email?.[0] ?? '?').toUpperCase()
-  const tier       = usage?.tier ?? 'free'
-  const tokensUsed = usage?.tokens_used ?? 0
+  const tier       = effectiveUsage?.tier ?? 'free'
+  const tokensUsed = effectiveUsage?.tokens_used ?? 0
   const tokenLimit = TIER_LIMITS[tier] ?? 50_000
   const usagePct   = Math.min(100, (tokensUsed / tokenLimit) * 100)
-  const periodStart = usage?.period_start ? new Date(usage.period_start) : null
+  const periodStart = effectiveUsage?.period_start ? new Date(effectiveUsage.period_start) : null
   const memberSince = new Date(user.created_at).toLocaleDateString('en-US', {
     month: 'long', day: 'numeric', year: 'numeric',
   })
@@ -238,6 +261,20 @@ export default function ProfileDashboard({ user, usage }: Props) {
       setDownloadError('Download failed. Please try again.')
     } finally {
       setDownloading(false)
+    }
+  }
+
+  async function handleSaveBadge() {
+    setSavingBadge(true)
+    setBadgeSaved(false)
+    try {
+      const { error } = await supabase
+        .from('user_usage')
+        .update({ preferred_badge: selectedBadge })
+        .eq('user_id', user.id)
+      if (!error) setBadgeSaved(true)
+    } finally {
+      setSavingBadge(false)
     }
   }
 
@@ -522,6 +559,133 @@ export default function ProfileDashboard({ user, usage }: Props) {
                 </div>
               </Card>
 
+              {/* Badge selection — tier1 / tier2 only */}
+              {(tier === 'tier1' || tier === 'tier2') && (
+                <div style={{ marginTop: '2rem' }}>
+                  <p style={{
+                    fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.1em',
+                    textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: '0.75rem',
+                  }}>
+                    Study Badge
+                  </p>
+                  <Card>
+                    <div style={{ marginBottom: '0.875rem' }}>
+                      <p style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)', marginBottom: '3px' }}>
+                        Choose your badge
+                      </p>
+                      <p style={{ fontSize: '12.5px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                        Displayed next to your avatar in study rooms. Set in your profile, applied everywhere.
+                      </p>
+                    </div>
+
+                    {/* Badge grid */}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
+                      {Object.entries(tier === 'tier2' ? { ...TIER1_BADGES, ...TIER2_BADGES } : TIER1_BADGES).map(([key]) => {
+                        const isActive = selectedBadge === key
+                        const isTier2Badge = key in TIER2_BADGES
+                        return (
+                          <button
+                            key={key}
+                            onClick={() => { setSelectedBadge(isActive ? null : key); setBadgeSaved(false) }}
+                            title={key}
+                            style={{
+                              width: '56px', height: '64px', borderRadius: '12px',
+                              border: isActive ? '2px solid var(--gold)' : '1px solid var(--border)',
+                              background: isActive ? 'var(--gold-dim)' : 'var(--ink-3)',
+                              cursor: 'pointer', display: 'flex', flexDirection: 'column',
+                              alignItems: 'center', justifyContent: 'center', gap: '5px',
+                              transition: 'all 0.15s', flexShrink: 0, position: 'relative',
+                            }}
+                            onMouseEnter={e => { if (!isActive) { e.currentTarget.style.borderColor = 'var(--border-gold)'; e.currentTarget.style.background = 'rgba(201,169,110,0.05)' } }}
+                            onMouseLeave={e => { if (!isActive) { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.background = 'var(--ink-3)' } }}
+                          >
+                            <BadgeSVG badge={key} size={30} />
+                            <span style={{
+                              fontFamily: 'var(--font-mono)', fontSize: '8px', letterSpacing: '0.05em',
+                              color: isActive ? 'var(--gold)' : isTier2Badge ? 'rgba(201,169,110,0.7)' : 'var(--text-tertiary)',
+                              textTransform: 'capitalize',
+                            }}>
+                              {key}
+                            </span>
+                            {isTier2Badge && (
+                              <span style={{
+                                position: 'absolute', top: 3, right: 4,
+                                fontFamily: 'var(--font-mono)', fontSize: '6px',
+                                color: 'var(--gold)', letterSpacing: '0.04em',
+                              }}>★</span>
+                            )}
+                          </button>
+                        )
+                      })}
+                      {/* None option */}
+                      <button
+                        onClick={() => { setSelectedBadge(null); setBadgeSaved(false) }}
+                        style={{
+                          width: '56px', height: '64px', borderRadius: '12px',
+                          border: selectedBadge === null ? '2px solid var(--gold)' : '1px solid var(--border)',
+                          background: selectedBadge === null ? 'var(--gold-dim)' : 'var(--ink-3)',
+                          cursor: 'pointer', display: 'flex', flexDirection: 'column',
+                          alignItems: 'center', justifyContent: 'center', gap: '5px',
+                          transition: 'all 0.15s', flexShrink: 0,
+                        }}
+                        onMouseEnter={e => { if (selectedBadge !== null) { e.currentTarget.style.borderColor = 'var(--border-gold)' } }}
+                        onMouseLeave={e => { if (selectedBadge !== null) { e.currentTarget.style.borderColor = 'var(--border)' } }}
+                      >
+                        <span style={{ fontSize: '20px', opacity: 0.3, lineHeight: 1 }}>—</span>
+                        <span style={{
+                          fontFamily: 'var(--font-mono)', fontSize: '8px', letterSpacing: '0.05em',
+                          color: selectedBadge === null ? 'var(--gold)' : 'var(--text-tertiary)',
+                        }}>none</span>
+                      </button>
+                    </div>
+
+                    {/* Preview + Save */}
+                    <div style={{
+                      display: 'flex', alignItems: 'center', gap: '1rem',
+                      paddingTop: '0.875rem', borderTop: '1px solid var(--border)',
+                      flexWrap: 'wrap',
+                    }}>
+                      <div>
+                        <p style={{
+                          fontFamily: 'var(--font-mono)', fontSize: '9px', letterSpacing: '0.06em',
+                          textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: '6px',
+                        }}>Preview</p>
+                        <AvatarWithBadge
+                          name={displayName || user.email || 'U'}
+                          color="#C9A96E"
+                          size={38}
+                          badge={selectedBadge}
+                        />
+                      </div>
+                      <div style={{ flex: 1 }} />
+                      {badgeSaved && (
+                        <span style={{
+                          fontFamily: 'var(--font-mono)', fontSize: '11px',
+                          color: 'var(--green)', letterSpacing: '0.03em',
+                        }}>
+                          ✓ Saved
+                        </span>
+                      )}
+                      <button
+                        onClick={handleSaveBadge}
+                        disabled={savingBadge}
+                        style={{
+                          padding: '0.5rem 1.125rem', borderRadius: '10px',
+                          border: '1px solid var(--border-gold)',
+                          background: savingBadge ? 'var(--ink-3)' : 'var(--gold-dim)',
+                          color: savingBadge ? 'var(--text-tertiary)' : 'var(--gold)',
+                          fontFamily: 'var(--font-sans)', fontSize: '13px', fontWeight: 500,
+                          cursor: savingBadge ? 'default' : 'pointer',
+                          flexShrink: 0, whiteSpace: 'nowrap', transition: 'all 0.2s',
+                        }}
+                      >
+                        {savingBadge ? 'Saving…' : 'Save badge'}
+                      </button>
+                    </div>
+                  </Card>
+                </div>
+              )}
+
               <div style={{ marginTop: '0.25rem' }}>
                 <button
                   onClick={handleSignOut}
@@ -546,6 +710,21 @@ export default function ProfileDashboard({ user, usage }: Props) {
             <section>
               <ContentHeader title="Plan & Usage" subtitle="Your current plan and token usage this period." />
 
+              {/* Payment failed warning banner */}
+              {sub?.status === 'past_due' && (
+                <div style={{
+                  marginBottom: '1rem', padding: '0.75rem 1rem',
+                  background: 'rgba(244,124,124,0.08)', border: '1px solid rgba(244,124,124,0.3)',
+                  borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '0.625rem',
+                }}>
+                  <span style={{ color: '#f47c7c', fontSize: '15px' }}>⚠</span>
+                  <p style={{ fontSize: '13px', color: '#f47c7c', margin: 0 }}>
+                    Your last payment failed. Cancel your plan and re-subscribe to continue.
+                    You currently have access but it will be removed after the retry period.
+                  </p>
+                </div>
+              )}
+
               <Card>
                 {/* Plan header row */}
                 <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem', padding: '0.5rem 0', marginBottom: '1rem' }}>
@@ -565,9 +744,12 @@ export default function ProfileDashboard({ user, usage }: Props) {
                         <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-tertiary)' }}>Free</span>
                       ) : null}
                     </div>
-                    {(sub?.cancel_at_period_end || cancelledNow) && sub?.current_period_end && (
+                    {sub?.current_period_end && (
                       <p style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-tertiary)', marginTop: '0.25rem' }}>
-                        Access until {new Date(sub.current_period_end).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        {(sub.cancel_at_period_end || cancelledNow)
+                          ? `Access until ${new Date(sub.current_period_end).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+                          : `Renews ${new Date(sub.current_period_end).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+                        }
                       </p>
                     )}
                   </div>
@@ -576,7 +758,16 @@ export default function ProfileDashboard({ user, usage }: Props) {
                   <div style={{ display: 'flex', gap: '0.625rem', flexWrap: 'wrap', alignItems: 'center' }}>
                     {tier !== 'free' ? (
                       <>
-                        {(sub?.cancel_at_period_end || cancelledNow) ? (
+                        {sub?.status === 'past_due' ? (
+                          <span style={{
+                            fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.06em',
+                            textTransform: 'uppercase', color: '#f47c7c',
+                            background: 'rgba(244,124,124,0.1)', border: '1px solid rgba(244,124,124,0.35)',
+                            padding: '3px 10px', borderRadius: '100px',
+                          }}>
+                            Payment failed
+                          </span>
+                        ) : (sub?.cancel_at_period_end || cancelledNow) ? (
                           <span style={{
                             fontFamily: 'var(--font-mono)', fontSize: '10px', letterSpacing: '0.06em',
                             textTransform: 'uppercase', color: 'var(--text-tertiary)',

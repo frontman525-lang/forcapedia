@@ -53,7 +53,9 @@ export class CashfreeProvider implements PaymentProvider {
     }
   }
 
-  async cancelSubscription(providerSubId: string): Promise<void> {
+  // options.atPeriodEnd is ignored — Cashfree cancels immediately; period-end
+  // semantics are managed via our DB cancel_at_period_end flag.
+  async cancelSubscription(providerSubId: string, _options?: { atPeriodEnd?: boolean }): Promise<void> {
     await cancelCashfreeSubscription(providerSubId)
   }
 

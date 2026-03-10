@@ -32,6 +32,9 @@ function SuccessContent() {
         if (data.subscription?.status === 'active') {
           setReady(true)
           clearInterval(interval)
+          // router.refresh() invalidates the Next.js client-side router cache so
+          // the profile page re-fetches fresh data from the server (new tier).
+          router.refresh()
           setTimeout(() => router.replace('/'), 2500)
         }
       } catch { /* ignore */ }

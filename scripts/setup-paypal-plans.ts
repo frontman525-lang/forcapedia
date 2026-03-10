@@ -4,8 +4,20 @@
 // Creates the Forcapedia product + 4 billing plans in PayPal (one-time setup).
 // After running, copy the printed plan IDs into your .env.local.
 //
-// Usage:
+// LIVE PRICING ($7.99 / $79.99 / $14.99 / $149.99):
 //   npx tsx scripts/setup-paypal-plans.ts
+//
+// TEST PRICING ($0.10 for all plans — end-to-end payment verification):
+//   PAYPAL_TEST_PRICING=true npx tsx scripts/setup-paypal-plans.ts
+//
+// ⚠️  IMPORTANT — Sandbox vs Production:
+//   Plans created with PAYPAL_ENV=SANDBOX only work in sandbox.
+//   Plans created with PAYPAL_ENV=PRODUCTION only work in production.
+//   Always match your credentials and plans to the same environment.
+//
+// If you see "The merchant isn't able to accept PayPal payments":
+//   → Your plan IDs are from sandbox but PAYPAL_ENV=PRODUCTION (or vice versa).
+//   → Run this script with the correct PAYPAL_ENV and update plan IDs in .env.
 //
 // Required env vars (in .env.local):
 //   PAYPAL_CLIENT_ID=
@@ -93,8 +105,10 @@ async function main() {
   console.log(`✓  Product created: ${productId}\n`)
 
   // 2. Plan definitions
-  // Set NEXT_PUBLIC_PAYPAL_TEST_PRICING=true in .env.local to create $0.10 test plans
-  const isTest = process.env['NEXT_PUBLIC_PAYPAL_TEST_PRICING'] === 'true'
+  // PAYPAL_TEST_PRICING=true (CLI) or NEXT_PUBLIC_PAYPAL_TEST_PRICING=true (.env.local)
+  const isTest =
+    process.env['PAYPAL_TEST_PRICING'] === 'true' ||
+    process.env['NEXT_PUBLIC_PAYPAL_TEST_PRICING'] === 'true'
   const prices = isTest
     ? { s_m: '0.10', s_y: '0.10', r_m: '0.10', r_y: '0.10' }
     : { s_m: '7.99', s_y: '79.99', r_m: '14.99', r_y: '149.99' }

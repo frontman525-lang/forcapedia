@@ -4,13 +4,15 @@
 // Adding Stripe later = one new case + create lib/payments/providers/stripe/.
 //
 import type { PaymentProvider, PaymentProviderName } from './types'
-import { CashfreeProvider } from './providers/cashfree'
-import { PayPalProvider }   from './providers/paypal'
+import { CashfreeProvider }  from './providers/cashfree'
+import { PayPalProvider }    from './providers/paypal'
+import { RazorpayProvider }  from './providers/razorpay'
 
 export function getPaymentProvider(name: PaymentProviderName): PaymentProvider {
   switch (name) {
-    case 'cashfree': return new CashfreeProvider()
-    case 'paypal':   return new PayPalProvider()
+    case 'cashfree':  return new CashfreeProvider()
+    case 'paypal':    return new PayPalProvider()
+    case 'razorpay':  return new RazorpayProvider()
     default: {
       // TypeScript exhaustiveness guard — will error at compile time if a new
       // PaymentProviderName is added without a corresponding case above.

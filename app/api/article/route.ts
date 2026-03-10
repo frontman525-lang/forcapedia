@@ -10,7 +10,7 @@ export async function GET(req: Request) {
   const supabase = await createClient()
   const { data, error } = await supabase
     .from('articles')
-    .select('slug, title, content, summary, category')
+    .select('slug, title, content, summary, category, wiki_url, verified_at, tags, sources')
     .eq('slug', slug)
     .single()
 

@@ -45,9 +45,31 @@ export async function POST() {
   const provider     = getPaymentProvider(providerName)
 
   // ── Cancel with provider ──────────────────────────────────────────────────
+  const adminDb = createAdminClient()
+
   try {
-    await provider.cancelSubscription(providerSubId)
+    // atPeriodEnd: true — user keeps access until current billing period ends.
+    // Razorpay uses cancel_at_cycle_end: 1; other providers ignore this option.
+    await provider.cancelSubscription(providerSubId, { atPeriodEnd: true })
   } catch (err) {
+    const msg    = err instanceof Error ? err.message : ''
+    const isGone = /not exist|not found|no longer|invalid.*id|404/i.test(msg) ||
+                   (err as { status?: number }).status === 404
+
+    if (isGone) {
+      // Subscription no longer exists at provider (e.g. expired test sub,
+      // already cancelled externally). Mark it cancelled in our DB and let the
+      // user proceed — they clearly have no active billing relationship.
+      console.warn(`[cancel] ${providerName} sub not found at provider — marking cancelled locally. sub=${sub.id}`)
+      await adminDb
+        .from('subscriptions')
+        .update({ status: 'cancelled', cancel_at_period_end: true, cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq('id', sub.id)
+      // Downgrade tier since there's no real subscription backing it
+      await adminDb.from('user_usage').update({ tier: 'free' }).eq('user_id', user.id)
+      return NextResponse.json({ ok: true, message: 'Subscription cancelled.' })
+    }
+
     console.error(`[cancel] ${providerName} error:`, err)
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Failed to cancel with payment provider.' },
@@ -58,7 +80,6 @@ export async function POST() {
   // ── Mark locally as pending cancellation ─────────────────────────────────
   // Status stays 'active' — the provider fires subscription.cancelled webhook
   // at period end, which is when the processor sets status = 'cancelled'.
-  const adminDb = createAdminClient()
   await adminDb
     .from('subscriptions')
     .update({ cancel_at_period_end: true, updated_at: new Date().toISOString() })

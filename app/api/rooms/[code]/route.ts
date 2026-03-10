@@ -1,5 +1,5 @@
 // GET /api/rooms/[code]
-// Returns room data + members + last 20 messages + highlights + nav history.
+// Returns room data + members + last 100 messages + highlights + nav history.
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 
@@ -46,7 +46,7 @@ export async function GET(_req: Request, { params }: Props) {
       .select('*')
       .eq('room_id', room.id)
       .order('created_at', { ascending: false })
-      .limit(20),
+      .limit(100),
     admin.from('room_highlights')
       .select('*')
       .eq('room_id', room.id)

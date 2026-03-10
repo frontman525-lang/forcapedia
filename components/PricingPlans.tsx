@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useState } from 'react'
 
-// ── Cashfree SDK (loaded from CDN on demand) ──────────────────────────────────
+// ── Cashfree SDK (hidden — kept for legacy/fallback, not shown in UI) ─────────
 interface CashfreeInstance {
   subscriptionsCheckout: (opts: {
     subsSessionId: string
@@ -25,6 +25,22 @@ function loadCashfreeSDK(mode: 'sandbox' | 'production'): Promise<CashfreeInstan
     script.src     = 'https://sdk.cashfree.com/js/v3/cashfree.js'
     script.onload  = init
     script.onerror = () => reject(new Error('Failed to load Cashfree script'))
+    document.head.appendChild(script)
+  })
+}
+
+// ── Razorpay SDK (loaded from CDN on demand) ──────────────────────────────────
+function loadRazorpaySDK(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    if ((window as any).Razorpay) { resolve(); return }
+    const existing = document.getElementById('razorpay-sdk')
+    if (existing) { existing.addEventListener('load', () => resolve()); return }
+    const script = document.createElement('script')
+    script.id      = 'razorpay-sdk'
+    script.src     = 'https://checkout.razorpay.com/v1/checkout.js'
+    script.onload  = () => resolve()
+    script.onerror = () => reject(new Error('Failed to load Razorpay payment SDK'))
     document.head.appendChild(script)
   })
 }
@@ -180,16 +196,87 @@ export default function PricingPlans({
     return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })
   }
 
+  // ── Razorpay popup helper ─────────────────────────────────────────────────
+  async function handleRazorpayPopup(
+    subscriptionId: string,
+    keyId:          string,
+    planKey:        string,
+    planName:       string,
+  ) {
+    try {
+      await loadRazorpaySDK()
+    } catch (err) {
+      console.error('[razorpay-sdk]', err)
+      setGlobalError('Failed to load payment SDK. Please try again.')
+      setBuying(null)
+      return
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const RazorpayClass = (window as any).Razorpay as new (opts: unknown) => {
+      open: () => void
+      on: (event: string, cb: (r: { error?: { description?: string } }) => void) => void
+    }
+
+    const rzp = new RazorpayClass({
+      key:             keyId,
+      subscription_id: subscriptionId,
+      name:            'Forcapedia',
+      description:     planName,
+      theme:           { color: '#C9A96E' },
+      modal: {
+        ondismiss: () => { setBuying(null) },
+      },
+      handler: async (response: {
+        razorpay_payment_id:      string
+        razorpay_subscription_id: string
+        razorpay_signature:       string
+      }) => {
+        // Verify signature server-side — prevents faked payments
+        try {
+          const verifyRes = await fetch('/api/payments/verify/razorpay', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({
+              razorpay_payment_id:      response.razorpay_payment_id,
+              razorpay_subscription_id: response.razorpay_subscription_id,
+              razorpay_signature:       response.razorpay_signature,
+            }),
+          })
+          if (verifyRes.ok) {
+            window.location.href = `/payment/success?plan=${planKey}`
+          } else {
+            const errData = await verifyRes.json().catch(() => ({})) as { error?: string }
+            setGlobalError(errData.error ?? 'Payment verification failed. Please contact support if you were charged.')
+            setBuying(null)
+          }
+        } catch {
+          setGlobalError('Payment complete but verification failed. Please contact support if your plan is not activated.')
+          setBuying(null)
+        }
+      },
+    })
+
+    rzp.on('payment.failed', (response) => {
+      setGlobalError(response.error?.description ?? 'Payment failed. Please try a different method.')
+      setBuying(null)
+    })
+
+    rzp.open()
+  }
+
   // ── Subscribe flow ────────────────────────────────────────────────────────
   async function initSubscribe(
-    tierKey:         string,
+    tierKey:          string,
     explicitBilling?: Billing,
-    providedPhone?:  string,
-    paymentProvider?: 'cashfree' | 'paypal',
+    providedPhone?:   string,
+    paymentProvider?: 'cashfree' | 'paypal' | 'razorpay',
   ) {
     const effectiveBilling  = explicitBilling ?? billing
-    const effectiveProvider = paymentProvider ?? (region === 'IN' ? 'cashfree' : 'paypal')
+    // Razorpay is the default for India (replaces Cashfree in the UI)
+    const effectiveProvider = paymentProvider ?? (region === 'IN' ? 'razorpay' : 'paypal')
     const planKey           = `${tierKey}_${effectiveBilling}`
+    const planName          = `Forcapedia ${tierKey === 'tier1' ? 'Scholar' : 'Researcher'} – ${effectiveBilling === 'yearly' ? 'Yearly' : 'Monthly'}`
     setBuying(planKey)
     setGlobalError(null)
 
@@ -201,11 +288,13 @@ export default function PricingPlans({
     if (providedPhone) body.phone = providedPhone
 
     let data: {
-      checkoutMode?: string
-      sessionId?:    string
-      cashfreeMode?: string
-      approvalUrl?:  string
-      error?:        string
+      checkoutMode?:  string
+      sessionId?:     string
+      cashfreeMode?:  string
+      approvalUrl?:   string
+      subscriptionId?: string
+      keyId?:         string
+      error?:         string
     }
 
     try {
@@ -221,7 +310,7 @@ export default function PricingPlans({
       return
     }
 
-    // Cashfree-specific: phone number required for mandate setup
+    // Cashfree-specific: phone number required for mandate setup (legacy path)
     if (data.error === 'PHONE_REQUIRED') {
       setPendingPlan(planKey)
       setPhoneModal(true)
@@ -235,7 +324,13 @@ export default function PricingPlans({
       return
     }
 
-    // ── Cashfree SDK checkout ──────────────────────────────────────────────
+    // ── Razorpay popup checkout ────────────────────────────────────────────
+    if (data.checkoutMode === 'razorpay_popup' && data.subscriptionId && data.keyId) {
+      await handleRazorpayPopup(data.subscriptionId, data.keyId, planKey, planName)
+      return
+    }
+
+    // ── Cashfree SDK checkout (legacy / hidden) ────────────────────────────
     if (data.checkoutMode === 'sdk' && data.sessionId) {
       try {
         const mode     = (data.cashfreeMode ?? 'sandbox') as 'sandbox' | 'production'
@@ -252,7 +347,6 @@ export default function PricingPlans({
 
     // ── PayPal redirect checkout ───────────────────────────────────────────
     if (data.checkoutMode === 'redirect' && data.approvalUrl) {
-      // Redirect to PayPal for approval — user returns to /payment/success
       window.location.href = data.approvalUrl
       return
     }
@@ -284,7 +378,8 @@ export default function PricingPlans({
     if (!confirmModal) return
     const { tierKey, billing: confirmedBilling, changeType } = confirmModal
     setConfirmModal(null)
-    const provider = selectedPayment === 'paypal' ? 'paypal' : 'cashfree'
+    // Razorpay handles all UPI / Card / NetBanking for India (replaces Cashfree)
+    const provider = selectedPayment === 'paypal' ? 'paypal' : 'razorpay'
 
     // Cancel to Free → call cancel endpoint
     if (changeType === 'cancel_to_free') {
@@ -319,7 +414,13 @@ export default function PricingPlans({
         setGlobalSuccess('Your current plan will remain active until the billing period ends. You can then resubscribe to the new plan.')
         return
       }
-      // Upgrade returns checkout data — fall through same as new subscription
+      // Upgrade returns checkout data — same handlers as new subscription
+      const planKey  = `${tierKey}_${confirmedBilling}`
+      const planName = `Forcapedia ${tierKey === 'tier1' ? 'Scholar' : 'Researcher'} – ${confirmedBilling === 'yearly' ? 'Yearly' : 'Monthly'}`
+      if (data.checkoutMode === 'razorpay_popup' && data.subscriptionId && data.keyId) {
+        await handleRazorpayPopup(data.subscriptionId, data.keyId, planKey, planName)
+        return
+      }
       if (data.checkoutMode === 'redirect' && data.approvalUrl) {
         window.location.href = data.approvalUrl; return
       }
@@ -917,6 +1018,7 @@ export default function PricingPlans({
                         Pay with
                       </p>
                       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                        {/* Razorpay button — UPI, Card, NetBanking for India */}
                         <button
                           onClick={() => region === 'IN' && setSelectedPayment('upi')}
                           disabled={region !== 'IN'}
@@ -934,7 +1036,7 @@ export default function PricingPlans({
                           }}
                         >
                           UPI / Card
-                          {region === 'IN' && <span style={{ display: 'block', fontSize: '8px', opacity: 0.55 }}>India</span>}
+                          {region === 'IN' && <span style={{ display: 'block', fontSize: '8px', opacity: 0.55 }}>Razorpay · India</span>}
                         </button>
                         <button
                           onClick={() => setSelectedPayment('paypal')}
@@ -965,7 +1067,7 @@ export default function PricingPlans({
                           transition: 'all 0.2s',
                         }}
                       >
-                        {selectedPayment === 'paypal' ? 'Continue with PayPal →' : 'Continue to UPI / Card →'}
+                        {selectedPayment === 'paypal' ? 'Continue with PayPal →' : 'Continue with Razorpay →'}
                       </button>
 
                       <p style={{ textAlign: 'center', fontSize: '11px', color: 'rgba(240,237,232,0.22)', marginTop: '0.75rem' }}>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -30,6 +30,15 @@ interface RelatedArticle {
   title: string
   summary: string
   category: string
+}
+
+interface ExplainHistoryItem {
+  hash: string
+  highlighted_text: string
+  explanation: string
+  mode: string
+  article_slug: string | null
+  created_at: string
 }
 
 interface TocItem {
@@ -119,10 +128,18 @@ function buildArticleContentWithToc(content: string): { html: string; items: Toc
   return { html, items, sections }
 }
 
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diff / 60_000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  const days = Math.floor(hrs / 24)
+  return `${days}d ago`
+}
 
-
-
-export default function ArticleView({ article }: { article: Article }) {
+export default function ArticleView({ article, isGenerating = false }: { article: Article; isGenerating?: boolean }) {
   const supabase = createClient()
   const router = useRouter()
   const articleContentRef = useRef<HTMLDivElement | null>(null)
@@ -140,26 +157,16 @@ export default function ArticleView({ article }: { article: Article }) {
   const [articleCopied, setArticleCopied] = useState(false)
   const [studyMode, setStudyMode] = useState<'solo' | 'together'>('solo')
   const [studyCreating, setStudyCreating] = useState(false)
-  const [studyModal, setStudyModal] = useState(false)
-  const [studyRoomCode, setStudyRoomCode] = useState<string | null>(null)
-  const [studyRoomLink, setStudyRoomLink] = useState<string | null>(null)
-  const [studyRoomCopied, setStudyRoomCopied] = useState(false)
-  const [studyJoinCode, setStudyJoinCode] = useState('')
-  const [studyJoining, setStudyJoining] = useState(false)
-  const [studyJoinError, setStudyJoinError] = useState<string | null>(null)
-  const [studyTier, setStudyTier] = useState<string | null>(null)
-  const [studyRoomName, setStudyRoomName] = useState('')
-  const [studyRoomTopic, setStudyRoomTopic] = useState('')
-  const [studyRoomPassword, setStudyRoomPassword] = useState('')
-  const [studyCreateError, setStudyCreateError] = useState<string | null>(null)
-  const [studyJoinPassword, setStudyJoinPassword] = useState('')
-  const [studyJoinNeedsPassword, setStudyJoinNeedsPassword] = useState(false)
   const [openSectionId, setOpenSectionId] = useState('')
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyItems, setHistoryItems] = useState<ExplainHistoryItem[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
   const recordedRef = useRef(false)
 
   const { html: contentWithAnchors, items: tocItems, sections: articleSections } = useMemo(
-    () => buildArticleContentWithToc(article.content),
-    [article.content],
+    // Skip expensive TOC computation on partial streaming HTML — only compute when done
+    () => isGenerating ? { html: '', items: [], sections: [] } : buildArticleContentWithToc(article.content),
+    [article.content, isGenerating],
   )
 
   // Badge date: prefer AI-provided event_date, else fall back to month+year of verified_at
@@ -195,10 +202,6 @@ export default function ArticleView({ article }: { article: Article }) {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
       setIsLoggedIn(true)
-
-      // Load tier for study toggle
-      supabase.from('user_usage').select('tier').eq('user_id', user.id).single()
-        .then(({ data, error }) => { if (!error) setStudyTier(data?.tier ?? 'free') })
 
       // Fire-and-forget: record the read (upsert updates read_at on revisit)
       fetch('/api/history', {
@@ -249,7 +252,27 @@ export default function ArticleView({ article }: { article: Article }) {
     fetchRelated()
   }, [article.slug, article.category, article.tags]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Fetch AI explain history when panel opens (lazy — only if logged in)
   useEffect(() => {
+    if (!historyOpen || !isLoggedIn) return
+    setHistoryLoading(true)
+    supabase
+      .from('explain_shares')
+      .select('hash, highlighted_text, explanation, mode, article_slug, created_at')
+      .order('created_at', { ascending: false })
+      .limit(30)
+      .then(({ data }) => {
+        setHistoryItems(data ?? [])
+        setHistoryLoading(false)
+      })
+      .catch(() => setHistoryLoading(false))
+  }, [historyOpen, isLoggedIn]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // useLayoutEffect runs synchronously before the browser paints, so the correct
+  // desktop/mobile layout is applied before the user sees anything — no accordion flash
+  // when ArticleGenerator swaps to ArticleView. SSR still renders isDesktopLayout=false
+  // (matches server HTML) so hydration is clean.
+  useLayoutEffect(() => {
     const mq = window.matchMedia('(min-width: 1100px)')
     const apply = () => setIsDesktopLayout(mq.matches)
     apply()
@@ -329,66 +352,6 @@ export default function ArticleView({ article }: { article: Article }) {
     target.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }, [activeSectionId, isDesktopLayout])
 
-  async function doJoinRoom() {
-    if (!studyJoinCode || studyJoining) return
-    if (studyJoinNeedsPassword && !studyJoinPassword) {
-      setStudyJoinError('Please enter the room password.')
-      return
-    }
-    setStudyJoining(true)
-    setStudyJoinError(null)
-    try {
-      const res = await fetch(`/api/rooms/${studyJoinCode}/join`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: studyJoinPassword || undefined }),
-      })
-      if (res.ok) {
-        router.push(`/room/${studyJoinCode}`)
-        return
-      }
-      const d = await res.json().catch(() => ({}))
-      if (d.error === 'PASSWORD_REQUIRED') {
-        setStudyJoinNeedsPassword(true)
-        setStudyJoinError('This room requires a password.')
-      } else if (d.error === 'Incorrect password.') {
-        setStudyJoinNeedsPassword(true)
-        setStudyJoinError('Incorrect password. Try again.')
-      } else if (res.status === 404) {
-        setStudyJoinError('Room not found or already closed.')
-      } else {
-        // Room found but might have other errors — just navigate and let the page handle it
-        router.push(`/room/${studyJoinCode}`)
-      }
-    } finally {
-      setStudyJoining(false)
-    }
-  }
-
-  const closeStudyModal = () => {
-    setStudyModal(false)
-    setStudyMode('solo')
-    setStudyRoomCode(null)
-    setStudyRoomLink(null)
-    setStudyRoomCopied(false)
-    setStudyJoinCode('')
-    setStudyJoinError(null)
-    setStudyRoomName('')
-    setStudyRoomTopic('')
-    setStudyRoomPassword('')
-    setStudyCreateError(null)
-    setStudyJoinPassword('')
-    setStudyJoinNeedsPassword(false)
-  }
-
-  // Close study modal on Escape
-  useEffect(() => {
-    if (!studyModal) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') closeStudyModal() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [studyModal]) // eslint-disable-line react-hooks/exhaustive-deps
-
   function scrollToSection(id: string) {
     const heading = document.getElementById(id)
     if (!heading) return
@@ -417,7 +380,8 @@ export default function ArticleView({ article }: { article: Article }) {
   }
 
   const hasToc = tocItems.length > 0
-  const showDesktopToc = hasToc && isDesktopLayout
+  // Always reserve two-column space on desktop to prevent layout shift when TOC arrives
+  const showDesktopToc = isDesktopLayout
   const showMobileToc = hasToc && !isDesktopLayout
 
   const layoutStyle = showDesktopToc
@@ -467,11 +431,36 @@ export default function ArticleView({ article }: { article: Article }) {
           {(['solo', 'together'] as const).map(m => (
             <button
               key={m}
-              onClick={() => {
-                if (m === 'solo') { setStudyMode('solo'); setStudyModal(false); return }
+              onClick={async () => {
+                if (m === 'solo') { setStudyMode('solo'); return }
                 if (!isLoggedIn) { router.push(`/login?next=/article/${article.slug}`); return }
                 setStudyMode('together')
-                setStudyModal(true)
+                setStudyCreating(true)
+                try {
+                  const res = await fetch('/api/rooms/create', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      articleSlug:  article.slug,
+                      articleTitle: article.title,
+                      roomName:     article.title.slice(0, 50) + ' Room',
+                    }),
+                  })
+                  const d = await res.json().catch(() => ({}))
+                  if (res.ok) {
+                    router.push(`/room/${d.code}`)
+                  } else if (res.status === 409 && d.existingCode) {
+                    router.push(`/room/${d.existingCode}`)
+                  } else if (res.status === 403) {
+                    router.push('/study')
+                  } else {
+                    setStudyMode('solo')
+                    setStudyCreating(false)
+                  }
+                } catch {
+                  setStudyMode('solo')
+                  setStudyCreating(false)
+                }
               }}
               style={{
                 padding: '7px 22px',
@@ -486,314 +475,15 @@ export default function ArticleView({ article }: { article: Article }) {
                 transition: 'all 0.18s',
               }}
             >
-              {m === 'solo' ? 'Solo' : 'Study Together'}
+              {m === 'together' && studyCreating ? 'Creating room…' : m === 'solo' ? 'Solo' : 'Study Together'}
             </button>
           ))}
         </div>
       </div>
 
-      {/* ══ Study Together modal ══════════════════════════════════════════════ */}
-      {studyModal && (
-        <>
-          {/* Backdrop */}
-          <div
-            onClick={closeStudyModal}
-            style={{
-              position: 'fixed', inset: 0, zIndex: 998,
-              backdropFilter: 'blur(10px) saturate(0.6)',
-              WebkitBackdropFilter: 'blur(10px) saturate(0.6)',
-              background: 'rgba(0,0,0,0.3)',
-              animation: 'fadeIn 0.18s ease',
-            }}
-          />
-          {/* Modal card */}
-          <div style={{
-            position: 'fixed', top: '50%', left: '50%',
-            transform: 'translate(-50%, -50%)',
-            zIndex: 999,
-            width: 'min(460px, calc(100vw - 2rem))',
-            background: 'var(--ink-2)',
-            border: '1px solid var(--border)',
-            borderRadius: '24px',
-            padding: '2rem',
-            boxShadow: '0 32px 80px rgba(0,0,0,0.7)',
-            animation: 'modalIn 0.22s cubic-bezier(0.34, 1.1, 0.64, 1)',
-          }}>
-            {/* Header */}
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
-              <div>
-                <h2 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.5rem', fontWeight: 300, color: 'var(--text-primary)', marginBottom: '0.3rem' }}>
-                  Study Together
-                </h2>
-                <p style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-tertiary)', letterSpacing: '0.04em' }}>
-                  {studyRoomCode ? 'Room is ready. Share and dive in.' : 'Collaborate live while reading.'}
-                </p>
-              </div>
-              <button onClick={closeStudyModal} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', padding: '2px', flexShrink: 0 }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M18 6L6 18M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
+      {/* ══ Study Together: toggle navigates directly to /room/[code] ════ */}
 
-            {/* ── Room-created state ── */}
-            {studyRoomCode ? (
-              <div style={{ animation: 'fadeIn 0.2s ease' }}>
-                {/* Success label */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: '#22c55e', letterSpacing: '0.06em' }}>Room created</span>
-                </div>
-
-                {/* Share link row */}
-                <div style={{
-                  display: 'flex', alignItems: 'center', gap: '0.5rem',
-                  padding: '0.625rem 0.75rem',
-                  background: 'var(--ink-3)', border: '1px solid var(--border)', borderRadius: '10px',
-                  marginBottom: '1rem',
-                }}>
-                  <span style={{
-                    flex: 1, fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-secondary)',
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '0.04em',
-                  }}>
-                    {studyRoomLink}
-                  </span>
-                  <button
-                    onClick={async () => {
-                      await navigator.clipboard.writeText(studyRoomLink ?? '').catch(() => null)
-                      setStudyRoomCopied(true)
-                      setTimeout(() => setStudyRoomCopied(false), 2000)
-                    }}
-                    title={studyRoomCopied ? 'Copied!' : 'Copy link'}
-                    style={{
-                      flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      width: 28, height: 28, borderRadius: '8px',
-                      border: studyRoomCopied ? '1px solid rgba(34,197,94,0.4)' : '1px solid var(--border)',
-                      background: studyRoomCopied ? 'rgba(34,197,94,0.1)' : 'transparent',
-                      color: studyRoomCopied ? '#22c55e' : 'var(--text-tertiary)',
-                      cursor: 'pointer', transition: 'all 0.15s',
-                    }}
-                  >
-                    {studyRoomCopied ? (
-                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-                    ) : (
-                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg>
-                    )}
-                  </button>
-                </div>
-
-                {/* WhatsApp share */}
-                <button
-                  onClick={() => {
-                    const text = encodeURIComponent(`Join my Forcapedia study room! ${studyRoomLink ?? ''}`)
-                    window.open(`https://wa.me/?text=${text}`, '_blank')
-                  }}
-                  style={{
-                    width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem',
-                    padding: '0.6rem', marginBottom: '0.6rem',
-                    background: 'rgba(37,211,102,0.08)', border: '1px solid rgba(37,211,102,0.2)', borderRadius: '10px',
-                    color: '#25d366', fontFamily: 'var(--font-mono)', fontSize: '12px', letterSpacing: '0.06em',
-                    cursor: 'pointer', transition: 'all 0.15s',
-                  }}
-                >
-                  Share via WhatsApp
-                </button>
-
-                {/* Enter Room CTA */}
-                <button
-                  onClick={() => router.push(`/room/${studyRoomCode}`)}
-                  style={{
-                    width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem',
-                    padding: '0.875rem',
-                    background: 'var(--gold-dim)', border: '1px solid var(--border-gold)', borderRadius: '14px',
-                    color: 'var(--gold)', fontFamily: 'var(--font-mono)', fontSize: '12px', letterSpacing: '0.08em',
-                    cursor: 'pointer', transition: 'all 0.15s',
-                  }}
-                >
-                  Enter Room
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M12 5l7 7-7 7" /></svg>
-                </button>
-              </div>
-            ) : (
-              <>
-                {/* ── Default state: Create Room + Join ── */}
-                {studyTier === null ? (
-                  <div style={{ textAlign: 'center', padding: '1rem 0', fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-tertiary)' }}>Loading…</div>
-                ) : studyTier === 'free' ? (
-                  <div style={{ padding: '1rem', borderRadius: '14px', marginBottom: '1.25rem', background: 'rgba(201,169,110,0.05)', border: '1px solid rgba(201,169,110,0.15)', textAlign: 'center' }}>
-                    <p style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-tertiary)', marginBottom: '0.5rem', letterSpacing: '0.04em' }}>Study rooms require Scholar plan</p>
-                    <Link href="/pricing" onClick={closeStudyModal} style={{ color: 'var(--gold)', fontFamily: 'var(--font-mono)', fontSize: '12px', letterSpacing: '0.06em' }}>Upgrade to Scholar →</Link>
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginBottom: '1.25rem' }}>
-                    {/* Room name (required) */}
-                    <input
-                      type="text" placeholder="Room name (required)" value={studyRoomName}
-                      onChange={e => { setStudyRoomName(e.target.value); setStudyCreateError(null) }}
-                      maxLength={60}
-                      style={{ background: 'var(--ink-3)', border: studyCreateError && !studyRoomName.trim() ? '1px solid rgba(244,124,124,0.4)' : '1px solid var(--border)', borderRadius: '10px', padding: '0.6rem 0.75rem', fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-primary)', outline: 'none', letterSpacing: '0.04em' }}
-                    />
-                    {/* Topic (optional) */}
-                    <input
-                      type="text" placeholder="Topic / description (optional)" value={studyRoomTopic}
-                      onChange={e => setStudyRoomTopic(e.target.value)}
-                      maxLength={120}
-                      style={{ background: 'var(--ink-3)', border: '1px solid var(--border)', borderRadius: '10px', padding: '0.6rem 0.75rem', fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-primary)', outline: 'none', letterSpacing: '0.04em' }}
-                    />
-                    {/* Password (required) */}
-                    <input
-                      type="password" placeholder="Room password (required)" value={studyRoomPassword}
-                      onChange={e => { setStudyRoomPassword(e.target.value); setStudyCreateError(null) }}
-                      style={{ background: 'var(--ink-3)', border: studyCreateError && !studyRoomPassword.trim() ? '1px solid rgba(244,124,124,0.4)' : '1px solid var(--border)', borderRadius: '10px', padding: '0.6rem 0.75rem', fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--text-primary)', outline: 'none', letterSpacing: '0.04em' }}
-                    />
-                    {studyCreateError && (
-                      <p style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--red, #F47C7C)', letterSpacing: '0.04em' }}>{studyCreateError}</p>
-                    )}
-                    <button
-                      onClick={async () => {
-                        if (!studyRoomName.trim()) { setStudyCreateError('Room name is required.'); return }
-                        if (!studyRoomPassword.trim()) { setStudyCreateError('Room password is required.'); return }
-                        setStudyCreating(true)
-                        setStudyCreateError(null)
-                        try {
-                          const res = await fetch('/api/rooms/create', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                              articleSlug: article.slug, articleTitle: article.title,
-                              roomName: studyRoomName.trim(),
-                              topic: studyRoomTopic.trim() || undefined,
-                              password: studyRoomPassword || undefined,
-                            }),
-                          })
-                          if (res.ok) {
-                            const { code } = await res.json()
-                            setStudyRoomCode(code)
-                            setStudyRoomLink(`${window.location.origin}/room/${code}`)
-                          } else {
-                            const d = await res.json().catch(() => ({}))
-                            if (res.status === 409 && d.existingCode) {
-                              setStudyCreateError(`You already have an active room. Join it at /room/${d.existingCode}`)
-                            } else {
-                              setStudyCreateError(d.error ?? 'Failed to create room.')
-                            }
-                          }
-                        } finally {
-                          setStudyCreating(false)
-                        }
-                      }}
-                      disabled={studyCreating}
-                      style={{
-                        width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
-                        padding: '0.875rem',
-                        background: 'var(--gold-dim)', border: '1px solid var(--border-gold)', borderRadius: '14px',
-                        color: 'var(--gold)', fontFamily: 'var(--font-mono)', fontSize: '12px', letterSpacing: '0.08em',
-                        cursor: studyCreating ? 'default' : 'pointer', transition: 'opacity 0.15s',
-                      }}
-                    >
-                      {studyCreating ? (
-                        <>
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ animation: 'spin 0.75s linear infinite', flexShrink: 0 }}>
-                            <path d="M12 2a10 10 0 0 1 10 10" />
-                          </svg>
-                          Creating…
-                        </>
-                      ) : '+ Create Room'}
-                    </button>
-                  </div>
-                )}
-
-                {/* Divider */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.25rem' }}>
-                  <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-tertiary)', letterSpacing: '0.06em' }}>or</span>
-                  <div style={{ flex: 1, height: '1px', background: 'var(--border)' }} />
-                </div>
-
-                {/* Join existing room */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  {/* Room code row */}
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <input
-                      type="text"
-                      placeholder="Enter room code…"
-                      value={studyJoinCode}
-                      onChange={e => {
-                        setStudyJoinCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))
-                        setStudyJoinError(null)
-                        setStudyJoinNeedsPassword(false)
-                        setStudyJoinPassword('')
-                      }}
-                      onKeyDown={async e => {
-                        if (e.key !== 'Enter' || !studyJoinCode || studyJoining) return
-                        if (studyJoinNeedsPassword && !studyJoinPassword) return
-                        doJoinRoom()
-                      }}
-                      style={{
-                        flex: 1, background: 'var(--ink-3)',
-                        border: studyJoinError ? '1px solid rgba(244,124,124,0.4)' : '1px solid var(--border)',
-                        borderRadius: '10px', padding: '0.625rem 0.875rem',
-                        fontFamily: 'var(--font-mono)', fontSize: '12px', letterSpacing: '0.08em',
-                        color: 'var(--text-primary)', outline: 'none',
-                      }}
-                    />
-                    <button
-                      onClick={doJoinRoom}
-                      disabled={!studyJoinCode || studyJoining}
-                      style={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem',
-                        padding: '0.625rem 1.25rem', borderRadius: '10px', flexShrink: 0,
-                        background: studyJoinCode ? 'var(--ink-3)' : 'transparent',
-                        border: '1px solid var(--border)',
-                        color: studyJoinCode ? 'var(--text-primary)' : 'var(--text-tertiary)',
-                        fontFamily: 'var(--font-mono)', fontSize: '12px', letterSpacing: '0.06em',
-                        cursor: studyJoinCode && !studyJoining ? 'pointer' : 'default', transition: 'all 0.15s',
-                        minWidth: 80,
-                      }}
-                    >
-                      {studyJoining ? (
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" style={{ animation: 'spin 0.75s linear infinite' }}>
-                          <path d="M12 2a10 10 0 0 1 10 10" />
-                        </svg>
-                      ) : 'Join →'}
-                    </button>
-                  </div>
-
-                  {/* Password field — shown when room requires it */}
-                  {studyJoinNeedsPassword && (
-                    <input
-                      type="password"
-                      placeholder="Room password…"
-                      value={studyJoinPassword}
-                      autoFocus
-                      onChange={e => { setStudyJoinPassword(e.target.value); setStudyJoinError(null) }}
-                      onKeyDown={e => { if (e.key === 'Enter') doJoinRoom() }}
-                      style={{
-                        background: 'var(--ink-3)',
-                        border: studyJoinError ? '1px solid rgba(244,124,124,0.4)' : '1px solid rgba(201,169,110,0.3)',
-                        borderRadius: '10px', padding: '0.625rem 0.875rem',
-                        fontFamily: 'var(--font-mono)', fontSize: '12px', letterSpacing: '0.08em',
-                        color: 'var(--text-primary)', outline: 'none',
-                        animation: 'fadeIn 0.15s ease',
-                      }}
-                    />
-                  )}
-
-                  {studyJoinError && (
-                    <p style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--red)', letterSpacing: '0.04em', animation: 'fadeIn 0.15s ease' }}>
-                      {studyJoinError}
-                    </p>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        </>
-      )}
-
-      <div className={`article-layout ${hasToc ? 'has-toc' : ''}`} style={layoutStyle}>
+      <div className={`article-layout ${showDesktopToc ? 'has-toc' : ''}`} style={layoutStyle}>
 
         {/* ── Desktop Fixed Sidebar ─────────────────────── */}
         {showDesktopToc && (
@@ -816,61 +506,80 @@ export default function ArticleView({ article }: { article: Article }) {
                 fontSize: '10px',
                 letterSpacing: '0.12em',
                 textTransform: 'uppercase',
-                color: 'var(--gold)',
+                color: hasToc ? 'var(--gold)' : 'var(--ink-3)',
                 marginBottom: '1rem',
                 paddingBottom: '0.6rem',
                 borderBottom: '1px solid var(--border)',
+                transition: 'color 0.3s',
               }}
             >
               On this page
             </p>
 
-            {/* TOC links */}
-            <nav style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-              {tocItems.map(item => {
-                const isActive = item.id === activeSectionId
-                return (
-                  <button
-                    key={item.id}
-                    ref={node => { tocButtonRefs.current[item.id] = node }}
-                    type="button"
-                    onClick={() => scrollToSection(item.id)}
+            {/* TOC links — real items or skeleton during generation */}
+            {hasToc ? (
+              <nav style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                {tocItems.map(item => {
+                    const isActive = item.id === activeSectionId
+                    return (
+                      <button
+                        key={item.id}
+                        ref={node => { tocButtonRefs.current[item.id] = node }}
+                        type="button"
+                        onClick={() => scrollToSection(item.id)}
+                        style={{
+                          textAlign: 'left',
+                          border: 'none',
+                          borderLeft: isActive ? '2px solid var(--gold)' : '2px solid transparent',
+                          background: isActive ? 'var(--gold-dim)' : 'transparent',
+                          color: isActive ? 'var(--gold)' : 'var(--text-tertiary)',
+                          fontFamily: 'var(--font-sans)',
+                          fontSize: item.level === 2 ? '13px' : '12px',
+                          lineHeight: 1.45,
+                          fontWeight: isActive ? 500 : 300,
+                          padding: item.level === 2
+                            ? '0.5rem 0.6rem 0.5rem 0.75rem'
+                            : '0.4rem 0.6rem 0.4rem 1.4rem',
+                          borderRadius: '0 8px 8px 0',
+                          cursor: 'pointer',
+                          transition: 'background 0.18s, color 0.18s, border-color 0.18s, font-weight 0.18s',
+                          width: '100%',
+                        }}
+                        onMouseEnter={e => {
+                          if (!isActive) {
+                            e.currentTarget.style.background = 'rgba(255,255,255,0.03)'
+                            e.currentTarget.style.color = 'var(--text-secondary)'
+                          }
+                        }}
+                        onMouseLeave={e => {
+                          if (!isActive) {
+                            e.currentTarget.style.background = 'transparent'
+                            e.currentTarget.style.color = 'var(--text-tertiary)'
+                          }
+                        }}
+                      >
+                        {item.text}
+                      </button>
+                    )
+                  })}
+              </nav>
+            ) : (
+              /* Skeleton sidebar — holds space during generation so layout never shifts */
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {[70, 55, 80, 50, 65, 45, 75].map((w, i) => (
+                  <div
+                    key={i}
+                    className="skeleton"
                     style={{
-                      textAlign: 'left',
-                      border: 'none',
-                      borderLeft: isActive ? '2px solid var(--gold)' : '2px solid transparent',
-                      background: isActive ? 'var(--gold-dim)' : 'transparent',
-                      color: isActive ? 'var(--gold)' : 'var(--text-tertiary)',
-                      fontFamily: 'var(--font-sans)',
-                      fontSize: item.level === 2 ? '13px' : '12px',
-                      lineHeight: 1.45,
-                      fontWeight: isActive ? 500 : 300,
-                      padding: item.level === 2
-                        ? '0.5rem 0.6rem 0.5rem 0.75rem'
-                        : '0.4rem 0.6rem 0.4rem 1.4rem',
-                      borderRadius: '0 8px 8px 0',
-                      cursor: 'pointer',
-                      transition: 'background 0.18s, color 0.18s, border-color 0.18s, font-weight 0.18s',
-                      width: '100%',
+                      height: '12px',
+                      width: `${w}%`,
+                      borderRadius: '4px',
+                      marginLeft: i % 3 === 0 ? 0 : '12px',
                     }}
-                    onMouseEnter={e => {
-                      if (!isActive) {
-                        e.currentTarget.style.background = 'rgba(255,255,255,0.03)'
-                        e.currentTarget.style.color = 'var(--text-secondary)'
-                      }
-                    }}
-                    onMouseLeave={e => {
-                      if (!isActive) {
-                        e.currentTarget.style.background = 'transparent'
-                        e.currentTarget.style.color = 'var(--text-tertiary)'
-                      }
-                    }}
-                  >
-                    {item.text}
-                  </button>
-                )
-              })}
-            </nav>
+                  />
+                ))}
+              </div>
+            )}
 
           </aside>
         )}
@@ -894,19 +603,25 @@ export default function ArticleView({ article }: { article: Article }) {
             <Link href="/" style={{ color: 'var(--gold)', textDecoration: 'none' }}>
               Forcapedia
             </Link>
-            <span>/</span>
-            <span style={{ color: 'var(--text-secondary)' }}>{article.category}</span>
-            <span>/</span>
-            <span
-              style={{
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                maxWidth: '200px',
-              }}
-            >
-              {article.title}
-            </span>
+            {isGenerating && !article.category ? (
+              <div className="skeleton" style={{ height: '10px', width: '120px', borderRadius: '4px' }} />
+            ) : (
+              <>
+                <span>/</span>
+                <span style={{ color: 'var(--text-secondary)' }}>{article.category}</span>
+                <span>/</span>
+                <span
+                  style={{
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    maxWidth: '200px',
+                  }}
+                >
+                  {article.title}
+                </span>
+              </>
+            )}
           </div>
 
 
@@ -922,38 +637,43 @@ export default function ArticleView({ article }: { article: Article }) {
           >
           {/* Left: pills */}
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0.5rem' }}>
+            {isGenerating && !article.title && (
+              <div className="skeleton" style={{ height: '26px', width: '130px', borderRadius: '100px' }} />
+            )}
             {/* Verified badge — shows event_date or month+year of verified_at */}
-            <div
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.4rem',
-                fontFamily: 'var(--font-mono)',
-                fontSize: '10px',
-                letterSpacing: '0.1em',
-                textTransform: 'uppercase',
-                color: 'var(--gold)',
-                background: 'var(--gold-dim)',
-                border: '1px solid var(--border-gold)',
-                padding: '4px 12px 4px 10px',
-                borderRadius: '100px',
-              }}
-            >
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <circle cx="6" cy="6" r="5.5" stroke="currentColor" strokeOpacity="0.4" />
-                <path
-                  d="M3.5 6l1.8 1.8L8.5 4.5"
-                  stroke="currentColor"
-                  strokeWidth="1.2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-              Verified {'\u00B7'} {badgeDate}
-            </div>
+            {(!isGenerating || article.title) && (
+              <div
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '10px',
+                  letterSpacing: '0.1em',
+                  textTransform: 'uppercase',
+                  color: 'var(--gold)',
+                  background: 'var(--gold-dim)',
+                  border: '1px solid var(--border-gold)',
+                  padding: '4px 12px 4px 10px',
+                  borderRadius: '100px',
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <circle cx="6" cy="6" r="5.5" stroke="currentColor" strokeOpacity="0.4" />
+                  <path
+                    d="M3.5 6l1.8 1.8L8.5 4.5"
+                    stroke="currentColor"
+                    strokeWidth="1.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                Verified {'\u00B7'} {badgeDate}
+              </div>
+            )}
 
             {/* "? Doubt" pill — animated, tooltip on hover */}
-            <div
+            {(!isGenerating || article.title) && <div
               style={{ position: 'relative', display: 'inline-flex' }}
               onMouseEnter={() => setDoubtTooltip(true)}
               onMouseLeave={() => { setDoubtTooltip(false); setDoubtPressed(false) }}
@@ -1009,101 +729,173 @@ export default function ArticleView({ article }: { article: Article }) {
                   Select any text to understand instantly
                 </div>
               )}
-            </div>
+            </div>}
 
           </div>{/* /left pills */}
 
-          {/* Share article — icon-only, aligned with pills */}
-          <button
-            onClick={async () => {
-              const url = window.location.href
-              if (navigator.share) {
-                await navigator.share({ title: article.title, url }).catch(() => null)
-              } else {
-                await navigator.clipboard.writeText(url).catch(() => null)
-                setArticleCopied(true)
-                setTimeout(() => setArticleCopied(false), 2000)
-              }
-            }}
-            title={articleCopied ? 'Link copied!' : 'Share article'}
-            style={{
-              flexShrink: 0,
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 28,
-              height: 28,
-              border: articleCopied ? '1px solid rgba(34,197,94,0.4)' : '1px solid var(--border)',
-              borderRadius: '50%',
-              background: articleCopied ? 'rgba(34,197,94,0.08)' : 'transparent',
-              color: articleCopied ? '#22c55e' : 'var(--text-tertiary)',
-              cursor: 'pointer',
-              transition: 'all 0.15s',
-            }}
-            onMouseEnter={e => {
-              if (!articleCopied) {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.06)'
-                e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'
-                e.currentTarget.style.color = 'var(--text-secondary)'
-              }
-            }}
-            onMouseLeave={e => {
-              if (!articleCopied) {
-                e.currentTarget.style.background = 'transparent'
-                e.currentTarget.style.borderColor = 'var(--border)'
-                e.currentTarget.style.color = 'var(--text-tertiary)'
-              }
-            }}
-            onMouseDown={e => { e.currentTarget.style.transform = 'scale(0.92)' }}
-            onMouseUp={e => { e.currentTarget.style.transform = 'scale(1)' }}
-          >
-            {articleCopied ? (
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            ) : (
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13" />
-              </svg>
+          {/* Share + History icons — side by side */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+            <button
+              onClick={async () => {
+                const url = window.location.href
+                if (navigator.share) {
+                  await navigator.share({ title: article.title, url }).catch(() => null)
+                } else {
+                  await navigator.clipboard.writeText(url).catch(() => null)
+                  setArticleCopied(true)
+                  setTimeout(() => setArticleCopied(false), 2000)
+                }
+              }}
+              title={articleCopied ? 'Link copied!' : 'Share article'}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 28,
+                height: 28,
+                border: articleCopied ? '1px solid rgba(34,197,94,0.4)' : '1px solid var(--border)',
+                borderRadius: '50%',
+                background: articleCopied ? 'rgba(34,197,94,0.08)' : 'transparent',
+                color: articleCopied ? '#22c55e' : 'var(--text-tertiary)',
+                cursor: 'pointer',
+                transition: 'all 0.15s',
+              }}
+              onMouseEnter={e => {
+                if (!articleCopied) {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.06)'
+                  e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'
+                  e.currentTarget.style.color = 'var(--text-secondary)'
+                }
+              }}
+              onMouseLeave={e => {
+                if (!articleCopied) {
+                  e.currentTarget.style.background = 'transparent'
+                  e.currentTarget.style.borderColor = 'var(--border)'
+                  e.currentTarget.style.color = 'var(--text-tertiary)'
+                }
+              }}
+              onMouseDown={e => { e.currentTarget.style.transform = 'scale(0.92)' }}
+              onMouseUp={e => { e.currentTarget.style.transform = 'scale(1)' }}
+            >
+              {articleCopied ? (
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              ) : (
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8M16 6l-4-4-4 4M12 2v13" />
+                </svg>
+              )}
+            </button>
+
+            {isLoggedIn && (
+              <button
+                onClick={() => setHistoryOpen(true)}
+                title="Your AI explain history"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: 28,
+                  height: 28,
+                  border: '1px solid var(--border)',
+                  borderRadius: '50%',
+                  background: 'transparent',
+                  color: 'var(--text-tertiary)',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s',
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.background = 'rgba(255,255,255,0.06)'
+                  e.currentTarget.style.borderColor = 'rgba(255,255,255,0.15)'
+                  e.currentTarget.style.color = 'var(--text-secondary)'
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = 'transparent'
+                  e.currentTarget.style.borderColor = 'var(--border)'
+                  e.currentTarget.style.color = 'var(--text-tertiary)'
+                }}
+                onMouseDown={e => { e.currentTarget.style.transform = 'scale(0.92)' }}
+                onMouseUp={e => { e.currentTarget.style.transform = 'scale(1)' }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <polyline points="12 6 12 12 16 14" />
+                </svg>
+              </button>
             )}
-          </button>
+          </div>
           </div>{/* /badges row */}
 
           {/* Article title */}
-          <h1
-            style={{
-              fontFamily: 'var(--font-serif)',
-              fontSize: 'clamp(2rem, 6vw, 3.5rem)',
-              fontWeight: 300,
-              lineHeight: 1.1,
-              letterSpacing: '-0.01em',
-              color: 'var(--text-primary)',
-              marginBottom: '1.25rem',
-            }}
-          >
-            {article.title}
-          </h1>
+          {isGenerating && !article.title ? (
+            <div style={{ marginBottom: '1.25rem' }}>
+              <div className="skeleton" style={{ height: '52px', width: '85%', borderRadius: '8px', marginBottom: '10px' }} />
+              <div className="skeleton" style={{ height: '52px', width: '60%', borderRadius: '8px' }} />
+            </div>
+          ) : (
+            <h1
+              style={{
+                fontFamily: 'var(--font-serif)',
+                fontSize: 'clamp(2rem, 6vw, 3.5rem)',
+                fontWeight: 300,
+                lineHeight: 1.1,
+                letterSpacing: '-0.01em',
+                color: 'var(--text-primary)',
+                marginBottom: '1.25rem',
+              }}
+            >
+              {article.title}
+            </h1>
+          )}
 
           {/* Summary */}
-          <p
-            style={{
-              fontSize: '17px',
-              color: 'var(--text-secondary)',
-              lineHeight: 1.7,
-              fontWeight: 300,
-              marginBottom: '1.5rem',
-              paddingBottom: '1.5rem',
-              borderBottom: '1px solid var(--border)',
-            }}
-          >
-            {article.summary}
-          </p>
+          {isGenerating && !article.summary ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '1.5rem', paddingBottom: '1.5rem', borderBottom: '1px solid var(--border)' }}>
+              <div className="skeleton" style={{ height: '14px', width: '100%', borderRadius: '4px' }} />
+              <div className="skeleton" style={{ height: '14px', width: '95%', borderRadius: '4px' }} />
+              <div className="skeleton" style={{ height: '14px', width: '80%', borderRadius: '4px' }} />
+            </div>
+          ) : (
+            <p
+              style={{
+                fontSize: '17px',
+                color: 'var(--text-secondary)',
+                lineHeight: 1.7,
+                fontWeight: 300,
+                marginBottom: '1.5rem',
+                paddingBottom: '1.5rem',
+                borderBottom: '1px solid var(--border)',
+              }}
+            >
+              {article.summary}
+            </p>
+          )}
 
           {/* Wikipedia info box — person / species / notable entity */}
           <WikiInfoBox wikiUrl={article.wiki_url} articleTitle={article.title} />
 
           {/* Article body */}
-          {isDesktopLayout ? (
+          {isGenerating ? (
+            /* Streaming mode — show live content as it arrives, no TOC/accordion */
+            <div style={{ margin: 0, padding: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: '1.5rem' }}>
+                <div style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--gold)', animation: 'pulse 1.4s ease-in-out infinite' }} />
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--text-tertiary)', letterSpacing: '0.08em' }}>
+                  Generating article…
+                </span>
+              </div>
+              {article.content ? (
+                <div className="article-prose" dangerouslySetInnerHTML={{ __html: article.content }} style={{ opacity: 0.85 }} />
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {[1, 0.9, 0.95, 0.7].map((w, i) => (
+                    <div key={i} style={{ height: 14, width: `${w * 100}%`, borderRadius: 4, background: 'var(--ink-3)' }} />
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : isDesktopLayout ? (
             <div
               className="article-prose"
               style={{ margin: 0, padding: 0 }}
@@ -1298,7 +1090,7 @@ export default function ArticleView({ article }: { article: Article }) {
                 </div>
               ) : (
                 <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '0' }}>
-                  {news.slice(0, 4).map((item, i, arr) => {
+                  {news.slice(0, 5).map((item, i, arr) => {
                     const age = Math.round((Date.now() - new Date(item.publishedAt).getTime()) / 3_600_000)
                     const ageLabel =
                       age < 1 ? 'just now' : age < 24 ? `${age}h ago` : `${Math.round(age / 24)}d ago`
@@ -1462,6 +1254,171 @@ export default function ArticleView({ article }: { article: Article }) {
 
       {/* Highlight & Explain — floating toolbar + slide-in panel */}
       <ExplainPanel articleSlug={article.slug} contentRef={articleContentRef} />
+
+      {/* AI History Drawer */}
+      {historyOpen && (
+        <>
+          {/* Backdrop */}
+          <div
+            onClick={() => setHistoryOpen(false)}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 998,
+              background: 'rgba(0,0,0,0.45)',
+              animation: 'fadeIn 0.18s ease',
+            }}
+          />
+          {/* Panel */}
+          <div
+            style={{
+              position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 999,
+              width: 'min(420px, 100vw)',
+              background: 'var(--ink-2)',
+              borderLeft: '1px solid var(--border)',
+              display: 'flex', flexDirection: 'column',
+              animation: 'slideInFromRight 0.22s cubic-bezier(0.4,0,0.2,1)',
+            }}
+          >
+            {/* Header */}
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '1rem 1.25rem',
+              borderBottom: '1px solid var(--border)',
+              flexShrink: 0,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--gold)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <polyline points="12 6 12 12 16 14" />
+                </svg>
+                <span style={{
+                  fontFamily: 'var(--font-mono)', fontSize: '11px',
+                  letterSpacing: '0.1em', textTransform: 'uppercase',
+                  color: 'var(--gold)',
+                }}>Your Explains</span>
+              </div>
+              <button
+                onClick={() => setHistoryOpen(false)}
+                style={{
+                  background: 'transparent', border: 'none', cursor: 'pointer',
+                  color: 'var(--text-tertiary)', padding: '4px',
+                  display: 'flex', alignItems: 'center',
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Body */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '0.75rem 0' }}>
+              {historyLoading ? (
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  padding: '3rem',
+                  fontFamily: 'var(--font-mono)', fontSize: '11px',
+                  color: 'var(--text-tertiary)',
+                }}>
+                  Loading…
+                </div>
+              ) : historyItems.length === 0 ? (
+                <div style={{
+                  padding: '3rem 1.5rem', textAlign: 'center',
+                  fontFamily: 'var(--font-mono)', fontSize: '12px',
+                  color: 'var(--text-tertiary)', lineHeight: 1.6,
+                }}>
+                  No explains yet.<br />
+                  <span style={{ fontSize: '10px', opacity: 0.6 }}>
+                    Select text and click &quot;Explain&quot; to start.
+                  </span>
+                </div>
+              ) : (
+                historyItems.map((item) => (
+                  <div
+                    key={item.hash}
+                    style={{
+                      padding: '0.9rem 1.25rem',
+                      borderBottom: '1px solid rgba(255,255,255,0.04)',
+                    }}
+                  >
+                    {/* Article + time row */}
+                    <div style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      marginBottom: '0.5rem', gap: '0.5rem',
+                    }}>
+                      {item.article_slug ? (
+                        <button
+                          onClick={() => { router.push(`/article/${item.article_slug}`); setHistoryOpen(false) }}
+                          style={{
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            fontFamily: 'var(--font-mono)', fontSize: '9px',
+                            letterSpacing: '0.08em', textTransform: 'uppercase',
+                            color: 'var(--gold)', padding: 0,
+                            textAlign: 'left', maxWidth: '200px',
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {item.article_slug.replace(/-/g, ' ')}
+                        </button>
+                      ) : (
+                        <span style={{ fontSize: '9px', color: 'var(--text-tertiary)' }}>—</span>
+                      )}
+                      <span style={{
+                        fontFamily: 'var(--font-mono)', fontSize: '9px',
+                        color: 'var(--text-tertiary)', flexShrink: 0,
+                      }}>
+                        {timeAgo(item.created_at)}
+                      </span>
+                    </div>
+                    {/* Highlighted text quote */}
+                    <blockquote style={{
+                      borderLeft: '2px solid rgba(201,169,110,0.35)',
+                      paddingLeft: '0.6rem',
+                      margin: '0 0 0.6rem 0',
+                      color: 'rgba(240,237,232,0.4)',
+                      fontSize: '12px',
+                      lineHeight: 1.5,
+                      fontStyle: 'italic',
+                      display: '-webkit-box',
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: 'vertical',
+                      overflow: 'hidden',
+                    }}>
+                      {item.highlighted_text}
+                    </blockquote>
+                    {/* Explanation */}
+                    <p style={{
+                      fontSize: '13px',
+                      color: 'var(--text-secondary)',
+                      lineHeight: 1.6,
+                      margin: 0,
+                      display: '-webkit-box',
+                      WebkitLineClamp: 4,
+                      WebkitBoxOrient: 'vertical',
+                      overflow: 'hidden',
+                    }}>
+                      {item.explanation}
+                    </p>
+                    {/* Mode badge */}
+                    <div style={{ marginTop: '0.5rem' }}>
+                      <span style={{
+                        fontFamily: 'var(--font-mono)', fontSize: '9px',
+                        letterSpacing: '0.08em', textTransform: 'uppercase',
+                        color: 'var(--text-tertiary)',
+                        background: 'rgba(255,255,255,0.04)',
+                        border: '1px solid var(--border)',
+                        borderRadius: '4px', padding: '2px 6px',
+                      }}>
+                        {item.mode === 'eli10' ? 'ELI10' : 'Simple'}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }

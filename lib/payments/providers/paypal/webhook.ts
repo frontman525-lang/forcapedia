@@ -101,13 +101,20 @@ export function parsePayPalWebhookEvent(rawBody: string): NormalizedWebhookEvent
   // Amount is only meaningful on payment events
   const amountObj = resource.amount as { total?: string; currency?: string } | undefined
 
+  // billing_info.next_billing_time is present on subscription activation events
+  // and tells us when the next charge will occur (= current period end)
+  const billingInfo = resource.billing_info as { next_billing_time?: string } | undefined
+  const currentPeriodEnd = billingInfo?.next_billing_time ?? undefined
+
   return {
-    type:          normalizedType,
+    type:             normalizedType,
     providerSubId,
+    eventId:          payload.id,    // PayPal's unique event ID — used for idempotency
     // PayPal webhooks don't carry our user ID — processor looks it up via providerSubId
-    amount:        isPaymentEvent && amountObj?.total    ? parseFloat(amountObj.total) : undefined,
-    currency:      isPaymentEvent && amountObj?.currency ? amountObj.currency          : undefined,
-    paymentId:     isPaymentEvent                        ? (resource.id as string | undefined) : undefined,
-    raw:           payload,
+    amount:           isPaymentEvent && amountObj?.total    ? parseFloat(amountObj.total) : undefined,
+    currency:         isPaymentEvent && amountObj?.currency ? amountObj.currency          : undefined,
+    paymentId:        isPaymentEvent                        ? (resource.id as string | undefined) : undefined,
+    currentPeriodEnd,
+    raw:              payload,
   }
 }

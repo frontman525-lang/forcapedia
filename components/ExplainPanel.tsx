@@ -51,8 +51,6 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
   // selectionchange events during drag (prevents toolbar flicker).
   const pointerDownRef = useRef(false)
   const selectionDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Timestamp of the last explain call — enforces 10-second client-side cooldown
-  const lastExplainRef = useRef<number>(0)
 
   // ── Mobile detection ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -209,16 +207,6 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
 
   // ── Core explain function ─────────────────────────────────────────────────
   const runExplain = useCallback(async (text: string, explainMode: Mode) => {
-    // Client-side 10-second cooldown gate (server enforces this too)
-    const COOLDOWN_MS = 10_000
-    const elapsed = Date.now() - lastExplainRef.current
-    if (lastExplainRef.current > 0 && elapsed < COOLDOWN_MS) {
-      const remaining = Math.ceil((COOLDOWN_MS - elapsed) / 1000)
-      showAlert(`Wait ${remaining}s before explaining again.`, 'error')
-      return
-    }
-    lastExplainRef.current = Date.now()
-
     setCurrentText(text)
     setMode(explainMode)
     setExplanation('')
@@ -670,7 +658,7 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
             left: `${selection.toolbarX}px`,
             top: `${selection.toolbarY}px`,
             transform: 'translateX(-50%)',
-            zIndex: 9000,
+            zIndex: 99999,
             display: 'flex',
             alignItems: 'center',
             background: 'var(--ink-3)',
@@ -796,7 +784,7 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
           bottom: 'calc(88px + env(safe-area-inset-bottom, 0px))',
           left: '50%',
           transform: 'translateX(-50%)',
-          zIndex: 9001,
+          zIndex: 99999,
         }}>
           {/* Inner div: animation + visual styling. slideInFromBottom translateY
               only affects this element — outer centering is never touched. */}
@@ -922,7 +910,7 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
           style={{
             position: 'fixed',
             inset: 0,
-            zIndex: 8998,
+            zIndex: 99998,
             animation: 'fadeInBackdrop 0.2s ease forwards',
           }}
         />
@@ -936,7 +924,7 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
             position: 'fixed',
             inset: 0,
             background: 'rgba(0,0,0,0.5)',
-            zIndex: 8998,
+            zIndex: 99998,
             animation: 'fadeInBackdrop 0.2s ease forwards',
           }}
         />
@@ -947,7 +935,7 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
         <div
           style={{
             position: 'fixed',
-            zIndex: 8999,
+            zIndex: 99999,
             background: 'var(--ink-2)',
             overflow: 'hidden',
             ...(isMobile

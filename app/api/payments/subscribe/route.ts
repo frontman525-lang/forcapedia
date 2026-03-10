@@ -12,7 +12,8 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { getPaymentProvider } from '@/lib/payments'
 import type { PaymentProviderName, PlanKey } from '@/lib/payments/types'
 import { getPlan } from '@/lib/cashfree/plans'
-import { PAYPAL_PLAN_AMOUNTS } from '@/lib/payments/providers/paypal/plans'
+import { PAYPAL_PLAN_AMOUNTS }   from '@/lib/payments/providers/paypal/plans'
+import { RAZORPAY_PLAN_AMOUNTS } from '@/lib/razorpay/plans'
 
 export async function POST(req: Request) {
   // ── Auth ───────────────────────────────────────────────────────────────────
@@ -33,7 +34,7 @@ export async function POST(req: Request) {
     tier         = body.tier
     billingCycle = body.billingCycle
     phone        = body.phone
-    rawProvider  = body.paymentProvider  // 'cashfree' | 'paypal'
+    rawProvider  = body.paymentProvider  // 'cashfree' | 'paypal' | 'razorpay'
   } catch {
     return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 })
   }
@@ -51,24 +52,55 @@ export async function POST(req: Request) {
   const planKey = `${tier}_${billingCycle}` as PlanKey
 
   // ── Determine provider ────────────────────────────────────────────────────
-  // Whitelist: only accept known provider names; default to cashfree.
+  // Whitelist: only accept known provider names; default to razorpay for India.
   const providerName: PaymentProviderName =
-    rawProvider === 'paypal' ? 'paypal' : 'cashfree'
+    rawProvider === 'paypal'   ? 'paypal'   :
+    rawProvider === 'cashfree' ? 'cashfree' :
+    rawProvider === 'razorpay' ? 'razorpay' :
+    'razorpay'  // safe default — Razorpay handles UPI/Card/NetBanking for India
 
-  // ── Duplicate subscription guard ──────────────────────────────────────────
+  // ── Duplicate / conflict guard ────────────────────────────────────────────
+  const adminDb = createAdminClient()
+
   const { data: existing } = await supabase
     .from('subscriptions')
-    .select('tier, billing_cycle')
+    .select('id, tier, billing_cycle, status')
     .eq('user_id', user.id)
-    .eq('status', 'active')
+    .in('status', ['active', 'past_due'])
+    .order('created_at', { ascending: false })
+    .limit(1)
     .maybeSingle()
 
-  if (existing && existing.tier === tier && existing.billing_cycle === billingCycle) {
+  if (existing) {
+    if (existing.status === 'past_due') {
+      return NextResponse.json(
+        { error: 'Your payment has failed. Please cancel your current plan from the profile page before subscribing again.' },
+        { status: 409 },
+      )
+    }
+    if (existing.tier === tier && existing.billing_cycle === billingCycle) {
+      return NextResponse.json(
+        { error: 'You are already subscribed to this plan. Visit your profile to manage it.' },
+        { status: 409 },
+      )
+    }
+    // User has an active subscription to a DIFFERENT plan.
+    // They must go through change-plan, not subscribe fresh — otherwise they
+    // get two concurrent subscriptions and are charged by both gateways.
     return NextResponse.json(
-      { error: 'You are already subscribed to this plan. Visit your profile to manage it.' },
+      { error: 'You already have an active subscription. To switch plans, use "Change plan" from your profile.' },
       { status: 409 },
     )
   }
+
+  // Expire any stale pending rows for this user (abandoned checkouts).
+  // Pending rows that were never paid accumulate on every abandoned checkout;
+  // cleaning them ensures the status API never confuses them for an active plan.
+  await adminDb
+    .from('subscriptions')
+    .update({ status: 'expired', updated_at: new Date().toISOString() })
+    .eq('user_id', user.id)
+    .eq('status', 'pending')
 
   // ── Cashfree: require phone ───────────────────────────────────────────────
   const resolvedPhone =
@@ -89,9 +121,10 @@ export async function POST(req: Request) {
   const returnUrl = `${origin}/payment/success?plan=${planKey}`
   const cancelUrl = `${origin}/payment/cancel`
   // Each provider has its own webhook endpoint to keep routing explicit
-  const notifyUrl = providerName === 'paypal'
-    ? `${siteUrl}/api/payments/webhook/paypal`
-    : `${siteUrl}/api/payments/webhook`
+  const notifyUrl =
+    providerName === 'paypal'   ? `${siteUrl}/api/payments/webhook/paypal`   :
+    providerName === 'razorpay' ? `${siteUrl}/api/payments/webhook/razorpay` :
+    `${siteUrl}/api/payments/webhook`
 
   // ── Call provider ─────────────────────────────────────────────────────────
   const provider = getPaymentProvider(providerName)
@@ -124,15 +157,14 @@ export async function POST(req: Request) {
   }
 
   // ── Resolve amount + currency per provider ────────────────────────────────
-  const amount   = providerName === 'paypal' ? PAYPAL_PLAN_AMOUNTS[planKey] : plan.plan_amount
-  const currency = providerName === 'paypal' ? 'USD'                        : plan.plan_currency
+  const amount   =
+    providerName === 'paypal'   ? PAYPAL_PLAN_AMOUNTS[planKey]   :
+    providerName === 'razorpay' ? RAZORPAY_PLAN_AMOUNTS[planKey] :
+    plan.plan_amount
+  const currency = providerName === 'paypal' ? 'USD' : 'INR'
 
   // ── Upsert pending subscription record ────────────────────────────────────
-  // Use upsert so that if the user retries (e.g. backs out of PayPal and tries
-  // again), the existing pending row is updated with the latest provider sub ID
-  // rather than a stale ID being left in the DB while the new one has no row.
-  const adminDb = createAdminClient()
-
+  // All stale pending rows were cleared above; just insert fresh for this attempt.
   const newRow = {
     user_id:          user.id,
     payment_provider: providerName,
@@ -147,33 +179,8 @@ export async function POST(req: Request) {
     currency,
   }
 
-  // Try to update an existing pending row first; if none exists, insert fresh.
-  const { data: existingPending } = await adminDb
-    .from('subscriptions')
-    .select('id')
-    .eq('user_id', user.id)
-    .eq('tier', tier)
-    .eq('billing_cycle', billingCycle)
-    .eq('payment_provider', providerName)
-    .eq('status', 'pending')
-    .maybeSingle()
-
-  if (existingPending) {
-    const { error: updateErr } = await adminDb
-      .from('subscriptions')
-      .update({
-        provider_sub_id: result.providerSubId,
-        cashfree_sub_id: providerName === 'cashfree' ? result.providerSubId : null,
-        amount,
-        currency,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', existingPending.id)
-    if (updateErr) console.error('[subscribe] DB update error:', updateErr)
-  } else {
-    const { error: insertErr } = await adminDb.from('subscriptions').insert(newRow)
-    if (insertErr) console.error('[subscribe] DB insert error:', insertErr)
-  }
+  const { error: insertErr } = await adminDb.from('subscriptions').insert(newRow)
+  if (insertErr) console.error('[subscribe] DB insert error:', insertErr)
 
   // ── Return checkout data ───────────────────────────────────────────────────
   if (result.checkoutMode === 'sdk') {
@@ -190,6 +197,19 @@ export async function POST(req: Request) {
     return NextResponse.json({
       checkoutMode: 'redirect',
       approvalUrl:  result.approvalUrl,
+    })
+  }
+
+  if (result.checkoutMode === 'razorpay_popup') {
+    const keyId = process.env.RAZORPAY_KEY_ID
+    if (!keyId) {
+      console.error('[subscribe] RAZORPAY_KEY_ID is not set')
+      return NextResponse.json({ error: 'Payment gateway not configured.' }, { status: 500 })
+    }
+    return NextResponse.json({
+      checkoutMode:   'razorpay_popup',
+      subscriptionId: result.providerSubId,
+      keyId,
     })
   }
 

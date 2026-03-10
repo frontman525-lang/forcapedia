@@ -71,63 +71,69 @@ export default function WikiInfoBox({ wikiUrl, articleTitle }: WikiInfoBoxProps)
     })
       .then(r => (r.ok ? r.json() : null))
       .then((d: WikiSummary | null) => {
-        if (d && d.thumbnail && d.type !== 'disambiguation') setSummary(d)
+        if (d && d.type !== 'disambiguation' && (d.thumbnail || d.description)) setSummary(d)
       })
       .catch(() => null)
 
     fetchInfoboxRows(wikiTitle).then(setRows)
   }, [wikiUrl, articleTitle])
 
-  if (!summary || !summary.thumbnail || imgError) return null
+  // Need at least a summary description or infobox rows to render anything
+  if ((!summary || !summary.description) && rows.length === 0) return null
 
-  const imgSrc = summary.thumbnail.source
+  const imgSrc = !imgError && summary?.thumbnail?.source ? summary.thumbnail.source : null
 
   return (
     <div className="wiki-info-box">
 
-      {/* Full-width image — natural aspect ratio, no cropping */}
-      <div className="wiki-img-col">
-        <img
-          src={imgSrc}
-          alt={summary.title}
-          onError={() => setImgError(true)}
-        />
-      </div>
+      {/* Full-width image — only if available */}
+      {imgSrc && (
+        <div className="wiki-img-col">
+          <img
+            src={imgSrc}
+            alt={summary?.title ?? ''}
+            onError={() => setImgError(true)}
+          />
+        </div>
+      )}
 
       {/* Info panel */}
       <div className="wiki-info-col">
 
-        {/* Caption */}
-        <p style={{
-          fontSize: '12px',
-          color: 'var(--text-tertiary)',
-          fontFamily: 'var(--font-sans)',
-          fontWeight: 300,
-          lineHeight: 1.4,
-          marginBottom: '0.5rem',
-          textAlign: 'center',
-        }}>
-          {summary.title}{summary.description ? `, ${summary.description}` : ''}
-        </p>
+        {/* Caption + description — only if summary exists */}
+        {summary && (
+          <>
+            <p style={{
+              fontSize: '12px',
+              color: 'var(--text-tertiary)',
+              fontFamily: 'var(--font-sans)',
+              fontWeight: 300,
+              lineHeight: 1.4,
+              marginBottom: '0.5rem',
+              textAlign: 'center',
+            }}>
+              {summary.title}{summary.description ? `, ${summary.description}` : ''}
+            </p>
 
-        {/* Role header */}
-        {summary.description && (
-          <p style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: '9.5px',
-            letterSpacing: '0.07em',
-            textTransform: 'uppercase',
-            color: 'var(--text-secondary)',
-            fontWeight: 500,
-            marginBottom: '0.625rem',
-            lineHeight: 1.4,
-          }}>
-            {summary.description}
-          </p>
+            {summary.description && (
+              <p style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: '9.5px',
+                letterSpacing: '0.07em',
+                textTransform: 'uppercase',
+                color: 'var(--text-secondary)',
+                fontWeight: 500,
+                marginBottom: '0.625rem',
+                lineHeight: 1.4,
+              }}>
+                {summary.description}
+              </p>
+            )}
+          </>
         )}
 
-        {/* Separator */}
-        <div style={{ borderTop: '1px solid var(--border)', marginBottom: '0.5rem' }} />
+        {/* Separator — only if there are rows below */}
+        {rows.length > 0 && <div style={{ borderTop: '1px solid var(--border)', marginBottom: '0.5rem' }} />}
 
         {/* Infobox rows from Wikipedia */}
         {rows.map((row, i) => (

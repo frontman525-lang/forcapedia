@@ -23,7 +23,26 @@
       "WebFetch(domain:groq.com)",
       "WebFetch(domain:ai.google.dev)",
       "WebFetch(domain:api-docs.deepseek.com)",
-      "Bash(npm ls pusher pusher-js)"
+      "Bash(npm ls pusher pusher-js)",
+      "WebFetch(domain:razorpay.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:api.razorpay.com)",
+      "WebFetch(domain:checkout.razorpay.com)",
+      "WebFetch(domain:docs.stripe.com)",
+      "WebFetch(domain:stripe.com)",
+      "WebFetch(domain:www.chargebee.com)",
+      "WebFetch(domain:paddle.com)",
+      "WebFetch(domain:recurly.com)",
+      "WebFetch(domain:docs.recurly.com)",
+      "WebFetch(domain:developer.paddle.com)",
+      "WebFetch(domain:docs.lemonsqueezy.com)",
+      "WebFetch(domain:apidocs.chargebee.com)",
+      "WebFetch(domain:help.netflix.com)",
+      "WebFetch(domain:support.spotify.com)",
+      "WebFetch(domain:www.notion.so)",
+      "WebFetch(domain:linear.app)",
+      "WebFetch(domain:docs.github.com)"
     ]
   }
 }

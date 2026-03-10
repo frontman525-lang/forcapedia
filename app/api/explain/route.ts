@@ -4,20 +4,14 @@ import { createClient } from '@/lib/supabase/server'
 const DAILY_LIMITS = { free: 1, tier1: 40, tier2: 80 } as const
 
 const SYSTEM_PROMPTS = {
-  simple: `You are a clear, thoughtful writer explaining a concept to a smart teenager.
-Rules:
-- Use plain language. No jargon. Short sentences.
-- Include exactly ONE powerful analogy (introduce it with "Think of it like..." or "Imagine...").
-- Include exactly ONE real-world example (introduce it with "For example..." or "In practice...").
-- Write in flowing paragraphs. HARD CAP: maximum 400 words. Never exceed this.
-- Plain text only — no markdown, no HTML, no bullet points, no headers.`,
-  eli10: `You are a friendly, enthusiastic teacher explaining something to a curious 10-year-old.
-Rules:
-- Use only words a 10-year-old knows. Keep sentences short and punchy.
-- Include exactly ONE fun analogy using something familiar (video games, food, school, sports, animals).
-- Include exactly ONE example they can picture in their head.
-- Be warm and encouraging. HARD CAP: maximum 400 words. Never exceed this.
-- Plain text only — no markdown, no HTML, no bullet points, no headers.`,
+  simple: `Explain this in plain language. The person didn't understand it. Give the clearest explanation that makes it click — often one sentence is enough, never more than three. You can use up to 400 characters if needed, but be as concise as possible. Plain text only — no markdown, no bullet points, no headers.`,
+  eli10: `Explain this to a curious 10-year-old. Use simple words and, if it helps, one quick analogy. Give the clearest explanation that makes it click — often one sentence is enough, never more than three. You can use up to 400 characters if needed, but be as concise as possible. Plain text only — no markdown, no bullet points, no headers.`,
+}
+
+function getMaxTokens(textLen: number): number {
+  if (textLen <=  50) return 160   // single word/phrase — one or two clear sentences
+  if (textLen <= 150) return 200   // a sentence — one to two sentences
+  return 250                       // longer — up to three sentences max
 }
 
 export async function POST(req: NextRequest) {
@@ -43,7 +37,7 @@ export async function POST(req: NextRequest) {
   // ── Rate limit check ──────────────────────────────────────────────────────
   const { data: usage } = await supabase
     .from('user_usage')
-    .select('tier, explain_count, explain_period_start, last_explain_at')
+    .select('tier, explain_count, explain_period_start')
     .eq('user_id', user.id)
     .single()
 
@@ -63,18 +57,6 @@ export async function POST(req: NextRequest) {
     }, { status: 429 })
   }
 
-  // ── 10-second cooldown check ───────────────────────────────────────────────
-  if (usage?.last_explain_at) {
-    const elapsed = Date.now() - new Date(usage.last_explain_at).getTime()
-    if (elapsed < 10_000) {
-      const remaining = Math.ceil((10_000 - elapsed) / 1000)
-      return NextResponse.json(
-        { error: `Wait ${remaining}s before explaining again.` },
-        { status: 429 },
-      )
-    }
-  }
-
   // ── Call Groq (streaming) ─────────────────────────────────────────────────
   const apiKey = process.env.GROQ_API_KEY
   if (!apiKey) return NextResponse.json({ error: 'AI unavailable.' }, { status: 503 })
@@ -92,7 +74,7 @@ export async function POST(req: NextRequest) {
         { role: 'user', content: `Explain this: "${text.trim()}"` },
       ],
       temperature: 0.6,
-      max_tokens: 650,
+      max_tokens: getMaxTokens(text.trim().length),
       stream: true,
     }),
     signal: AbortSignal.timeout(30_000),
@@ -109,7 +91,6 @@ export async function POST(req: NextRequest) {
     .update({
       explain_count: currentCount + 1,
       explain_period_start: today,
-      last_explain_at: now,
       updated_at: now,
     })
     .eq('user_id', user.id)
@@ -161,7 +142,7 @@ export async function POST(req: NextRequest) {
       } catch {
         // Stream ended or connection dropped
       } finally {
-        controller.close()
+        try { controller.close() } catch { /* already closed on [DONE] */ }
       }
     },
   })

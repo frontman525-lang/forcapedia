@@ -80,7 +80,8 @@ export async function sendEmail({ to, subject, template }: SendEmailOptions) {
 
 export { WelcomeEmail }        from './templates/WelcomeEmail'
 export { PaymentSuccessEmail } from './templates/PaymentSuccessEmail'
-export { PaymentFailedEmail }  from './templates/PaymentFailedEmail'
+export { PaymentFailedEmail }           from './templates/PaymentFailedEmail'
+export { SubscriptionCancelledEmail }  from './templates/SubscriptionCancelledEmail'
 export { InvoiceEmail }        from './templates/InvoiceEmail'
 export { ResetPasswordEmail }  from './templates/ResetPasswordEmail'
 export { ConfirmEmail }        from './templates/ConfirmEmail'

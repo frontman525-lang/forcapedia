@@ -38,6 +38,9 @@ export const ch = {
  * Fire-and-forget broadcast to a Soketi channel.
  * Pass socketId to exclude the sender (matches Supabase `self: false` behaviour).
  */
+// 3-second hard cap — if Hetzner is unreachable, API routes must not hang.
+const BROADCAST_TIMEOUT_MS = 3_000
+
 export async function broadcast(
   channel: string,
   event: string,
@@ -46,14 +49,21 @@ export async function broadcast(
 ): Promise<void> {
   try {
     const pusher = getSoketi()
-    await pusher.trigger(
+    const trigger = pusher.trigger(
       channel,
       event,
       data,
       socketId ? { socket_id: socketId } : undefined,
     )
+    const timeout = new Promise<void>((_, reject) =>
+      setTimeout(() => reject(new Error('soketi broadcast timeout')), BROADCAST_TIMEOUT_MS)
+    )
+    await Promise.race([trigger, timeout])
   } catch (err) {
     // Never crash an API route because of a broadcast failure
-    console.error('[soketi] broadcast error:', channel, event, err)
+    const msg = err instanceof Error ? err.message : String(err)
+    if (!msg.includes('broadcast timeout')) {
+      console.error('[soketi] broadcast error:', channel, event, err)
+    }
   }
 }

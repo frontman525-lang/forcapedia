@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, Suspense } from 'react'
+import { useState, useEffect, useRef, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import Link from 'next/link'
@@ -8,6 +8,7 @@ import Link from 'next/link'
 type Screen =
   | 'home' | 'signup' | 'login-email' | 'login-password'
   | 'signup-email' | 'forgot' | 'sent' | 'verify'
+  | 'otp' | 'reset-password'
 
 function mapError(msg: string, mode: 'signin' | 'signup') {
   const m = msg.toLowerCase()
@@ -294,11 +295,30 @@ html, body {
 }
 .fade { animation: fadeUp 0.28s cubic-bezier(0.22, 1, 0.36, 1) both; }
 
+/* ── OTP digit boxes ── */
+.otp-row { display: flex; gap: 10px; justify-content: center; margin-bottom: 1.5rem; }
+.otp-box {
+  width: 46px; height: 54px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.04);
+  color: #F0EDE8;
+  font-family: 'Inter', sans-serif;
+  font-size: 22px; font-weight: 500;
+  text-align: center;
+  outline: none;
+  transition: border-color 0.15s, background 0.15s;
+  caret-color: #C9A96E;
+}
+.otp-box:focus { border-color: rgba(201,169,110,0.6); background: rgba(255,255,255,0.07); }
+.otp-box.filled { border-color: rgba(255,255,255,0.3); }
+
 /* ── Mobile safety ── */
 @media (max-width: 380px) {
   .page { justify-content: flex-start; padding-top: 3rem; padding-bottom: 5rem; }
   .logo-center { margin-bottom: 2rem; }
   .btn-white, .btn-cta, .btn-dark { font-size: 14px; padding: 13px 16px; }
+  .otp-box { width: 40px; height: 48px; font-size: 20px; gap: 7px; }
 }
 `
 
@@ -318,6 +338,12 @@ function LoginContent() {
   const [loading, setLoading]   = useState(false)
   const [slowSend, setSlowSend] = useState(false)
   const [error, setError]       = useState<string | null>(null)
+
+  // OTP state
+  const [otpDigits, setOtpDigits]         = useState(['', '', '', '', '', ''])
+  const [resendCooldown, setResendCooldown] = useState(0)
+  const [otpType, setOtpType]             = useState<'signup' | 'forgot'>('forgot')
+  const otpRefs = useRef<(HTMLInputElement | null)[]>([])
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -375,8 +401,9 @@ function LoginContent() {
     if (error) { setError(mapError(error.message, 'signup')); return }
     // Session means email confirmation is disabled — go straight in
     if (data.session) { router.replace(nextUrl); return }
-    // Confirmation required — show the verify screen
-    setScreen('verify')
+    // Confirmation required — show the OTP screen (hook sends 6-digit code)
+    setOtpType('signup')
+    goOtp()
   }
 
   async function handleForgot(e: { preventDefault(): void }) {
@@ -385,22 +412,104 @@ function LoginContent() {
     if (!em) { setError('Enter your email address.'); return }
     setLoading(true); setSlowSend(false); setError(null)
     const slowTimer = setTimeout(() => setSlowSend(true), 1400)
-    const { error } = await supabase.auth.resetPasswordForEmail(em, {
-      redirectTo: `${window.location.origin}/auth/callback?next=/auth/update-password`,
+    const { error } = await supabase.auth.signInWithOtp({
+      email: em,
+      options: { shouldCreateUser: false },
     })
     clearTimeout(slowTimer)
-    setLoading(false)
-    setSlowSend(false)
+    setLoading(false); setSlowSend(false)
     if (error) {
-      // Supabase can timeout waiting for hook response even when email is eventually sent.
-      if (isSupabaseHookTimeout(error.message || '')) {
-        setScreen('sent')
-        return
-      }
-      setError(error.message)
-      return
+      if (isSupabaseHookTimeout(error.message || '')) { setOtpType('forgot'); goOtp(); return }
+      setError(error.message); return
     }
-    setScreen('sent')
+    setOtpType('forgot')
+    goOtp()
+  }
+
+  function goOtp() {
+    setOtpDigits(['', '', '', '', '', ''])
+    setError(null)
+    setScreen('otp')
+    startResendCooldown()
+  }
+
+  function startResendCooldown() {
+    setResendCooldown(30)
+    const t = setInterval(() => {
+      setResendCooldown(n => { if (n <= 1) { clearInterval(t); return 0 } return n - 1 })
+    }, 1000)
+  }
+
+  function handleOtpInput(i: number, val: string) {
+    const digit = val.replace(/\D/g, '').slice(-1)
+    const next = [...otpDigits]
+    next[i] = digit
+    setOtpDigits(next)
+    if (digit && i < 5) otpRefs.current[i + 1]?.focus()
+  }
+
+  function handleOtpKey(i: number, e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Backspace' && !otpDigits[i] && i > 0) {
+      otpRefs.current[i - 1]?.focus()
+    }
+  }
+
+  function handleOtpPaste(e: React.ClipboardEvent) {
+    const digits = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6).split('')
+    if (!digits.length) return
+    e.preventDefault()
+    const next = [...otpDigits]
+    digits.forEach((d, idx) => { if (idx < 6) next[idx] = d })
+    setOtpDigits(next)
+    const focusIdx = Math.min(digits.length, 5)
+    otpRefs.current[focusIdx]?.focus()
+  }
+
+  async function handleVerifyOtp(e: { preventDefault(): void }) {
+    e.preventDefault()
+    const token = otpDigits.join('')
+    if (token.length < 6) { setError('Enter all 6 digits.'); return }
+    setLoading(true); setError(null)
+    const { error } = await supabase.auth.verifyOtp({
+      email: email.trim().toLowerCase(),
+      token,
+      type: otpType === 'signup' ? 'signup' : 'email',
+    })
+    setLoading(false)
+    if (error) { setError('Invalid or expired code. Try again.'); return }
+    if (otpType === 'signup') {
+      // Account confirmed and signed in — go straight to the app
+      router.replace(nextUrl)
+    } else {
+      // Forgot password — let user set new password inline
+      setPassword(''); setConfirm('')
+      setScreen('reset-password')
+    }
+  }
+
+  async function handleSetPassword(e: { preventDefault(): void }) {
+    e.preventDefault()
+    if (password.length < 6) { setError('Password must be at least 6 characters.'); return }
+    if (password !== confirm) { setError('Passwords do not match.'); return }
+    setLoading(true); setError(null)
+    const { error } = await supabase.auth.updateUser({ password })
+    setLoading(false)
+    if (error) { setError(error.message); return }
+    router.replace(nextUrl)
+  }
+
+  async function handleResendOtp() {
+    if (resendCooldown > 0) return
+    setError(null); setLoading(true)
+    if (otpType === 'signup') {
+      await supabase.auth.resend({ type: 'signup', email: email.trim().toLowerCase() })
+    } else {
+      await supabase.auth.signInWithOtp({ email: email.trim().toLowerCase(), options: { shouldCreateUser: false } })
+    }
+    setLoading(false)
+    setOtpDigits(['', '', '', '', '', ''])
+    startResendCooldown()
+    otpRefs.current[0]?.focus()
   }
 
   const Logo = () => (
@@ -578,7 +687,7 @@ function LoginContent() {
             <div className="fade" key="forgot">
               <Logo />
               <p style={{ fontSize: '13.5px', color: 'rgba(240,237,232,0.4)', marginBottom: '1.5rem', fontWeight: 300, lineHeight: 1.55 }}>
-                Enter your email and we'll send a secure reset link.
+                Enter your email and we'll send a 6-digit code.
               </p>
               <form onSubmit={handleForgot}>
                 <label className="lbl" htmlFor="fp-rs">Email</label>
@@ -586,9 +695,88 @@ function LoginContent() {
                   onChange={e => setEmail(e.target.value)} autoComplete="email" disabled={loading} autoFocus />
                 {error && <div className="err">{error}</div>}
                 <button className="btn-cta" type="submit" disabled={loading || !email.trim()}>
-                  {loading ? (slowSend ? 'Still sending…' : 'Sending…') : 'Send reset link'}
+                  {loading ? (slowSend ? 'Still sending…' : 'Sending…') : 'Send code'}
                 </button>
                 <button className="btn-dark" type="button" onClick={() => go('login-password')}>Go back</button>
+              </form>
+            </div>
+          )}
+
+          {/* ══ OTP ENTRY ══ */}
+          {screen === 'otp' && (
+            <div className="fade" key="otp" style={{ textAlign: 'center' }}>
+              <Logo />
+              <p style={{ fontSize: '13.5px', color: 'rgba(240,237,232,0.4)', marginBottom: '0.3rem', fontWeight: 300 }}>
+                We sent a 6-digit code to
+              </p>
+              <p style={{ fontSize: '14px', color: '#F0EDE8', fontWeight: 500, marginBottom: '1.75rem', wordBreak: 'break-all' }}>
+                {email}
+              </p>
+              <form onSubmit={handleVerifyOtp}>
+                <div className="otp-row" onPaste={handleOtpPaste}>
+                  {otpDigits.map((d, i) => (
+                    <input
+                      key={i}
+                      ref={el => { otpRefs.current[i] = el }}
+                      className={`otp-box${d ? ' filled' : ''}`}
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      maxLength={1}
+                      value={d}
+                      autoFocus={i === 0}
+                      disabled={loading}
+                      onChange={e => handleOtpInput(i, e.target.value)}
+                      onKeyDown={e => handleOtpKey(i, e)}
+                    />
+                  ))}
+                </div>
+                {error && <div className="err" style={{ textAlign: 'left' }}>{error}</div>}
+                <button className="btn-cta" type="submit" disabled={loading || otpDigits.join('').length < 6}>
+                  {loading ? 'Verifying…' : 'Verify code'}
+                </button>
+              </form>
+              <p style={{ fontSize: '13px', color: 'rgba(240,237,232,0.35)', marginTop: '1rem' }}>
+                {resendCooldown > 0
+                  ? `Resend in ${resendCooldown}s`
+                  : <button className="link-sm" onClick={handleResendOtp}>Resend code</button>
+                }
+              </p>
+              <p style={{ marginTop: '0.75rem' }}>
+                <button className="link-sm" onClick={() => go(otpType === 'signup' ? 'signup-email' : 'forgot')}>
+                  Use a different email
+                </button>
+              </p>
+            </div>
+          )}
+
+          {/* ══ RESET PASSWORD (after OTP verified) ══ */}
+          {screen === 'reset-password' && (
+            <div className="fade" key="reset-password">
+              <Logo />
+              <p style={{ fontSize: '13.5px', color: 'rgba(240,237,232,0.4)', marginBottom: '1.5rem', fontWeight: 300, lineHeight: 1.55 }}>
+                Choose a new password for your account.
+              </p>
+              <form onSubmit={handleSetPassword}>
+                <label className="lbl" htmlFor="rp-pw">New password</label>
+                <div className="field">
+                  <input id="rp-pw" className="inp pr"
+                    type={showPass ? 'text' : 'password'} value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    autoComplete="new-password" autoFocus disabled={loading} placeholder="Min 6 characters" />
+                  <button type="button" className="eye-btn" onClick={() => setShowPass(p => !p)} tabIndex={-1}>
+                    {showPass ? <EyeClosed /> : <EyeOpen />}
+                  </button>
+                </div>
+                <label className="lbl" htmlFor="rp-cf">Confirm password</label>
+                <input id="rp-cf" className="inp"
+                  type={showPass ? 'text' : 'password'} value={confirm}
+                  onChange={e => setConfirm(e.target.value)}
+                  autoComplete="new-password" disabled={loading} placeholder="Re-enter password" />
+                {error && <div className="err">{error}</div>}
+                <button className="btn-cta" type="submit" disabled={loading || !password || !confirm}>
+                  {loading ? 'Updating…' : 'Set new password'}
+                </button>
               </form>
             </div>
           )}

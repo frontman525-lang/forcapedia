@@ -3,6 +3,14 @@
     {
       "path": "/api/cron/refresh",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/cron/cleanup-rooms",
+      "schedule": "*/2 * * * *"
+    },
+    {
+      "path": "/api/cron/cleanup-pending-subs",
+      "schedule": "*/30 * * * *"
     }
   ]
 }

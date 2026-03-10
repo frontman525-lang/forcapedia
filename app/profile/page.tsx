@@ -6,6 +6,7 @@ import ProfileDashboard from '@/components/ProfileDashboard'
 import HomeBackground from '@/components/HomeBackground'
 import ParticleCanvas from '@/components/ParticleCanvas'
 
+export const dynamic  = 'force-dynamic'   // always fetch fresh data — never serve cached tier info
 export const metadata: Metadata = { title: 'Account — Forcapedia' }
 
 export default async function ProfilePage() {
@@ -16,7 +17,7 @@ export default async function ProfilePage() {
 
   const { data: usage } = await supabase
     .from('user_usage')
-    .select('tier, tokens_used, period_start')
+    .select('tier, tokens_used, period_start, preferred_badge')
     .eq('user_id', user.id)
     .single()
 

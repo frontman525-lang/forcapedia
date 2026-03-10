@@ -87,7 +87,7 @@ export default async function RoomPage({ params }: Props) {
     admin.from('room_messages').select('*').eq('room_id', room.id).order('created_at', { ascending: false }).limit(50),
     admin.from('room_highlights').select('*').eq('room_id', room.id).eq('article_slug', room.article_slug).order('created_at', { ascending: false }).limit(50),
     admin.from('room_navigation_history').select('*').eq('room_id', room.id).order('navigated_at').limit(20),
-    admin.from('articles').select('slug, title, content, summary, category').eq('slug', room.article_slug).single(),
+    admin.from('articles').select('slug, title, content, summary, category, wiki_url, verified_at, tags, sources').eq('slug', room.article_slug).single(),
     supabase.from('user_usage').select('tier').eq('user_id', user.id).single(),
   ])
 

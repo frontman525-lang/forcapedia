@@ -8,12 +8,14 @@ export async function GET() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  // Active or pending subscription (most recent first)
+  // Return active OR past_due subscriptions.
+  // past_due = payment failed but in grace period (user retains access, shown as warning in UI).
+  // pending/expired are internal states — never shown in UI.
   const { data: subscription } = await supabase
     .from('subscriptions')
     .select('id, tier, billing_cycle, status, amount, currency, current_period_start, current_period_end, cancel_at_period_end, cancelled_at, created_at')
     .eq('user_id', user.id)
-    .in('status', ['active', 'pending'])
+    .in('status', ['active', 'past_due'])
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle()

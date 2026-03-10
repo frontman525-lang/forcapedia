@@ -26,11 +26,19 @@ export function generateRoomCode(): string {
 export function getMaxMembers(tier: string): number {
   if (tier === 'tier2') return 50
   if (tier === 'tier1') return 20
-  return 0 // free users cannot create rooms
+  return 5 // free tier: up to 5 members
 }
 
+/** Max session length in seconds by tier. */
+export function getMaxDurationSeconds(tier: string): number {
+  if (tier === 'tier2') return 5 * 3600   // 5 hours
+  if (tier === 'tier1') return 2 * 3600   // 2 hours
+  return 25 * 60                           // 25 minutes (free)
+}
+
+
 export function canCreateRoom(tier: string): boolean {
-  return tier === 'tier1' || tier === 'tier2'
+  return tier === 'free' || tier === 'tier1' || tier === 'tier2'
 }
 
 export function isObserverTier(tier: string): boolean {
@@ -67,29 +75,28 @@ export function getDefaultBadge(tier: string): string | null {
 
 // ── Abuse prevention ───────────────────────────────────────────────────────────
 
-const LINK_PATTERN  = /https?:\/\/\S+|www\.\S+|\b\S+\.(com|net|org|io|co|in|uk)\b/gi
-const PHONE_PATTERN = /\b\d{10,}\b|\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b|\+\d[\s\d\-]{9,}/g
-
-const PROFANITY_HARD = [
-  'fuck', 'fucking', 'shit', 'bitch', 'asshole', 'nigger', 'nigga',
-  'faggot', 'cunt', 'whore', 'bastard',
-]
+const LINK_PATTERN = /https?:\/\/\S+|www\.\S+|\b\S+\.(com|net|org|io|co|in|uk)\b/gi
 
 export function containsBlockedContent(text: string): string | null {
-  LINK_PATTERN.lastIndex  = 0
-  PHONE_PATTERN.lastIndex = 0
-  if (LINK_PATTERN.test(text))  return 'Links are not allowed in room chat.'
-  if (PHONE_PATTERN.test(text)) return 'Phone numbers are not allowed in room chat.'
+  LINK_PATTERN.lastIndex = 0
+  if (LINK_PATTERN.test(text)) return 'Links are not allowed in room chat.'
   return null
 }
 
-export function censorProfanity(text: string): string {
-  let result = text
-  for (const word of PROFANITY_HARD) {
-    const re = new RegExp(`\\b${word}\\b`, 'gi')
-    result = result.replace(re, '*'.repeat(word.length))
-  }
-  return result
+// ── IST time helpers ────────────────────────────────────────────────────────────
+
+const IST_OFFSET_MS = 5.5 * 3600 * 1000
+
+/**
+ * Returns the UTC timestamp for the start of today in IST (midnight IST).
+ * Free-tier room creation resets at this time each day.
+ */
+export function getMidnightISTasUTC(): Date {
+  const nowIST     = new Date(Date.now() + IST_OFFSET_MS)
+  // Build midnight in IST (as a UTC value with the IST date fields)
+  const midnightUTC = Date.UTC(nowIST.getUTCFullYear(), nowIST.getUTCMonth(), nowIST.getUTCDate())
+  // Shift back: this UTC value represents midnight IST → subtract offset
+  return new Date(midnightUTC - IST_OFFSET_MS)
 }
 
 // ── Password hashing (SHA-256 via Node crypto) ─────────────────────────────────

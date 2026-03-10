@@ -8,13 +8,14 @@ import { createAdminClient } from '@/lib/supabase/admin'
 
 interface Props { params: Promise<{ code: string }> }
 
-const SYSTEM_PROMPT = `You are a clear, thoughtful writer explaining a concept to a smart teenager.
-Rules:
-- Use plain language. No jargon. Short sentences.
-- Include exactly ONE powerful analogy (introduce it with "Think of it like..." or "Imagine...").
-- Include exactly ONE real-world example (introduce it with "For example..." or "In practice...").
-- Write in flowing paragraphs. HARD CAP: maximum 300 words. Never exceed this.
-- Plain text only — no markdown, no HTML, no bullet points, no headers.`
+const SYSTEM_PROMPT = `Explain this clearly and concisely. The student didn't understand it. Be direct. No filler. No lectures.`
+
+function getMaxTokens(textLen: number): number {
+  if (textLen <=  50) return  80   // single word / short phrase
+  if (textLen <= 150) return 150   // a sentence
+  if (textLen <= 400) return 280   // a few sentences
+  return 400                       // paragraph — hard cap: never exceed 450
+}
 
 export async function POST(req: Request, { params }: Props) {
   const { code } = await params
@@ -22,7 +23,7 @@ export async function POST(req: Request, { params }: Props) {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { selectedText, withExplain = false, socketId } = await req.json().catch(() => ({}))
+  const { selectedText, withExplain = false, socketId, requiresApproval = false, highlightId } = await req.json().catch(() => ({}))
   if (!selectedText || typeof selectedText !== 'string') {
     return NextResponse.json({ error: 'selectedText required' }, { status: 400 })
   }
@@ -48,6 +49,18 @@ export async function POST(req: Request, { params }: Props) {
   if (!member || member.kicked_at) return NextResponse.json({ error: 'Not in room.' }, { status: 403 })
   if (member.is_observer) return NextResponse.json({ error: 'Observers cannot highlight.' }, { status: 403 })
 
+  // Free user highlight → send to host for approval instead of broadcasting immediately
+  if (requiresApproval && !withExplain) {
+    await broadcast(ch.admission(code), 'highlight_request', {
+      id:           highlightId ?? `hl-${Date.now()}`,
+      userId:       user.id,
+      displayName:  member.display_name,
+      avatarColor:  member.avatar_color,
+      text:         selectedText.slice(0, 400),
+    })
+    return NextResponse.json({ ok: true, pending: true })
+  }
+
   let explanation: string | null = null
 
   if (withExplain) {
@@ -72,6 +85,8 @@ export async function POST(req: Request, { params }: Props) {
 
     const apiKey = process.env.GROQ_API_KEY
     if (apiKey) {
+      const clipped = selectedText.trim().slice(0, 600)
+      const maxTokens = getMaxTokens(clipped.length)
       const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -79,10 +94,10 @@ export async function POST(req: Request, { params }: Props) {
           model: 'llama-3.1-8b-instant',
           messages: [
             { role: 'system', content: SYSTEM_PROMPT },
-            { role: 'user', content: `Explain this: "${selectedText.trim().slice(0, 600)}"` },
+            { role: 'user', content: `Explain this: "${clipped}"` },
           ],
           temperature: 0.6,
-          max_tokens: 500,
+          max_tokens: maxTokens,
           stream: false,
         }),
       }).catch(() => null)
@@ -114,22 +129,12 @@ export async function POST(req: Request, { params }: Props) {
     article_slug:    room.article_slug,
   }).select().single()
 
-  // Also post as a room message so everyone sees it in chat
-  if (explanation) {
-    await admin.from('room_messages').insert({
-      room_id:      room.id,
-      user_id:      user.id,
-      display_name: member.display_name,
-      avatar_color: member.avatar_color,
-      content:      JSON.stringify({ selectedText: selectedText.slice(0, 300), explanation }),
-      kind:         'explain',
-    })
-  }
-
   // Broadcast explain_shared to doubts channel so all members see it
+  // (no DB insert — the JSON content exceeds the room_messages 500-char constraint;
+  //  explain messages are ephemeral in-room events, not persisted)
   if (explanation) {
     await broadcast(ch.doubts(code), 'explain_shared', {
-      selectedText: selectedText.slice(0, 300),
+      selectedText,
       explanation,
       userId:      user.id,
       triggeredBy: member.display_name,

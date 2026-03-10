@@ -101,7 +101,9 @@ export class PayPalProvider implements PaymentProvider {
     }
   }
 
-  async cancelSubscription(providerSubId: string): Promise<void> {
+  // options.atPeriodEnd is ignored — PayPal stops future billing on cancel;
+  // the user retains access until the current period ends automatically.
+  async cancelSubscription(providerSubId: string, _options?: { atPeriodEnd?: boolean }): Promise<void> {
     // PayPal expects a reason string (optional but recommended for records)
     await paypalRequest(
       'POST',

@@ -99,6 +99,20 @@
   0%, 100% { opacity: 1; }
   50%       { opacity: 0.4; transform: scale(0.85); }
 }
+/* ── Premium badge frame animations ── */
+@keyframes badge-pulse {
+  0%, 100% { filter: brightness(1); }
+  50%       { filter: brightness(1.35); }
+}
+@keyframes badge-legend {
+  0%   { box-shadow: 0 0 10px rgba(255,107,107,0.7), 0 0 20px rgba(255,107,107,0.3); }
+  25%  { box-shadow: 0 0 10px rgba(201,169,110,0.7), 0 0 20px rgba(201,169,110,0.3); }
+  50%  { box-shadow: 0 0 10px rgba(125,249,255,0.7), 0 0 20px rgba(125,249,255,0.3); }
+  75%  { box-shadow: 0 0 10px rgba(180,126,247,0.7), 0 0 20px rgba(180,126,247,0.3); }
+  100% { box-shadow: 0 0 10px rgba(255,107,107,0.7), 0 0 20px rgba(255,107,107,0.3); }
+}
+.badge-pulse  { animation: badge-pulse  2.4s ease-in-out infinite; }
+.badge-legend { animation: badge-legend 3s ease-in-out infinite; }
 @keyframes cardFadeIn {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -283,10 +297,25 @@ body::before {
 
 /* ─── PROSE STYLES ───────────────────────────────── */
 .article-prose {
-  touch-action: pan-y;
+  touch-action: pan-x pan-y; /* allow both scroll and selection on touch */
   -webkit-user-select: text;
   user-select: text;
   -webkit-touch-callout: none; /* suppress iOS long-press callout (links/images) */
+  cursor: text; /* consistent text cursor across all sections */
+}
+
+/* Prevent "drag link" from hijacking text selection */
+.article-prose a {
+  -webkit-user-drag: none;
+  user-drag: none;
+}
+
+/* All child elements inherit text cursor so headings don't show pointer */
+.article-prose h2,
+.article-prose h3 {
+  cursor: text;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .article-prose h2 {
@@ -362,6 +391,13 @@ body::before {
   color: var(--gold-light);
 }
 
+/* Neutralise any rogue inline styles the AI might emit (e.g. style="color:green") */
+.article-prose [style*="color"] { color: inherit !important; }
+/* <mark> is not in the allowed tag list but just in case */
+.article-prose mark { background: transparent; color: inherit; }
+/* Links inside prose use gold, not browser-default blue */
+.article-prose a { color: var(--gold); text-decoration: underline; text-decoration-color: var(--border-gold); }
+
 /* Light mode overrides */
 html.light .article-prose code {
   color: var(--gold);
@@ -380,6 +416,8 @@ html.light .article-prose p.formula-block code {
   overflow: hidden;
   margin-bottom: 2rem;
   background: rgba(255, 255, 255, 0.02);
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* Image: full width, natural aspect ratio — no cropping on mobile */
@@ -407,6 +445,9 @@ html.light .article-prose p.formula-block code {
     clear: right;
   }
 }
+
+/* Study room infobox is positioned by a wrapper div with inline float styles —
+   no CSS override needed here. The wrapper is 280px wide (same as article page). */
 
 /* Article layout: single column by default, sticky TOC on desktop */
 .article-layout {
