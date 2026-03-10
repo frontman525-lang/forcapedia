@@ -147,9 +147,9 @@ export const metadata: Metadata = {
 
   // ── 8. Icons ───────────────────────────────────────────────────────────────
   icons: {
-    icon:        [{ url: '/favicon.ico', sizes: '48x48', type: 'image/x-icon' }],
-    shortcut:    '/favicon.ico',
-    apple:       [{ url: '/favicon.ico', sizes: '48x48' }],
+    icon:     [{ url: '/icon.png', sizes: '512x512', type: 'image/png' }],
+    shortcut: '/icon.png',
+    apple:    [{ url: '/icon.png', sizes: '512x512' }],
   },
 }
 
