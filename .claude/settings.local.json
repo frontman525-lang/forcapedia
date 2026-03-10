@@ -44,7 +44,16 @@
       "WebFetch(domain:linear.app)",
       "WebFetch(domain:docs.github.com)",
       "Bash(npx vercel --prod)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(grep -r \"vercel\\\\|next.svg\\\\|vercel.svg\" c:UsersshaikDesktopforcapedia --include=*.ts --include=*.tsx --include=*.js --include=*.jsx)",
+      "Bash(grep -rn tier c:UsersshaikDesktopforcapediaapp --include=*.tsx --include=*.ts)",
+      "Bash(grep -rn \"tokensUsed\\\\|token_limit\\\\|user_usage\" c:UsersshaikDesktopforcapedia --include=*.tsx --include=*.ts)",
+      "Bash(find c:UsersshaikDesktopforcapedialib -type f \\\\\\(-name *.ts -o -name *.tsx \\\\\\))",
+      "Bash(grep -rn \"free\\\\|tier1\\\\|tier2\\\\|Scholar\\\\|Researcher\" c:UsersshaikDesktopforcapedialibpayments --include=*.ts --include=*.tsx)",
+      "Bash(grep -rn user_usage c:UsersshaikDesktopforcapedia --include=*.ts --include=*.tsx)",
+      "Bash(grep -rn \"isObserver\\\\|getMaxMembers\\\\|getMaxDurationSeconds\\\\|getDefaultBadge\" c:UsersshaikDesktopforcapedialib --include=*.ts)",
+      "Bash(find c:UsersshaikDesktopforcapedia -type f \\\\\\(-name *.ts -o -name *.tsx -o -name *.js -o -name *.jsx \\\\\\) ! -path */.next/* ! -path */node_modules/*)",
+      "Bash(xargs grep:*)"
     ]
   }
 }

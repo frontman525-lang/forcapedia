@@ -76,15 +76,25 @@ export async function POST(req: Request) {
   const now        = new Date()
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
 
-  const { data: usage } = await supabase
+  // Read tier without period filter (tier persists across billing periods)
+  const { data: tierRow } = await supabase
     .from('user_usage')
-    .select('tokens_used, tier')
+    .select('tier')
+    .eq('user_id', user.id)
+    .order('period_start', { ascending: false })
+    .limit(1)
+    .single()
+
+  // Read tokens_used for current period only
+  const { data: usageRow } = await supabase
+    .from('user_usage')
+    .select('tokens_used')
     .eq('user_id', user.id)
     .gte('period_start', monthStart)
     .single()
 
-  const tier       = usage?.tier        ?? 'free'
-  const tokensUsed = usage?.tokens_used ?? 0
+  const tier       = tierRow?.tier          ?? 'free'
+  const tokensUsed = usageRow?.tokens_used  ?? 0
   const tokenLimit = tier === 'free' ? 50_000 : tier === 'tier1' ? 2_000_000 : 4_000_000
 
   if (tokensUsed >= tokenLimit) {
