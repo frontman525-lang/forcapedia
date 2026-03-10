@@ -29,7 +29,7 @@ export default async function StudyPage() {
   const admin = createAdminClient()
 
   const [usageRes, membershipsRes] = await Promise.all([
-    admin.from('user_usage').select('tier, preferred_badge').eq('user_id', user.id).single(),
+    admin.from('user_usage').select('tier, preferred_badge').eq('user_id', user.id).order('period_start', { ascending: false }).limit(1).single(),
     admin
       .from('room_members')
       .select('joined_at, study_rooms(code, room_name, article_title, status, created_at)')
