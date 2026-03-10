@@ -1,9 +1,4 @@
--- ════════════════════════════════════════════════════════════════════════════
--- STUDY ROOMS v2 — Enhanced Features Migration
--- Run in Supabase Dashboard → SQL Editor
--- ════════════════════════════════════════════════════════════════════════════
 
--- ── New columns: study_rooms ─────────────────────────────────────────────────
 ALTER TABLE study_rooms
   ADD COLUMN IF NOT EXISTS room_name      TEXT,
   ADD COLUMN IF NOT EXISTS topic         TEXT,
