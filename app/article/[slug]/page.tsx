@@ -27,7 +27,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const article = await getArticle(slug)
 
   if (!article) {
-    return { title: 'Article Not Found — Forcapedia' }
+    // Article is being generated client-side — derive readable title from slug
+    const displayTitle = slug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+    return { title: `${displayTitle} — Forcapedia` }
   }
 
   const url   = `${SITE_URL}/article/${slug}`
