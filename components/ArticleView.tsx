@@ -255,17 +255,22 @@ export default function ArticleView({ article, isGenerating = false }: { article
   // Fetch AI explain history when panel opens (lazy — only if logged in)
   useEffect(() => {
     if (!historyOpen || !isLoggedIn) return
+    let cancelled = false
     setHistoryLoading(true)
-    supabase
-      .from('explain_shares')
-      .select('hash, highlighted_text, explanation, mode, article_slug, created_at')
-      .order('created_at', { ascending: false })
-      .limit(30)
-      .then(({ data }) => {
-        setHistoryItems(data ?? [])
-        setHistoryLoading(false)
-      })
-      .catch(() => setHistoryLoading(false))
+    ;(async () => {
+      try {
+        const { data } = await supabase
+          .from('explain_shares')
+          .select('hash, highlighted_text, explanation, mode, article_slug, created_at')
+          .order('created_at', { ascending: false })
+          .limit(30)
+
+        if (!cancelled) setHistoryItems(data ?? [])
+      } finally {
+        if (!cancelled) setHistoryLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
   }, [historyOpen, isLoggedIn]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // useLayoutEffect runs synchronously before the browser paints, so the correct
