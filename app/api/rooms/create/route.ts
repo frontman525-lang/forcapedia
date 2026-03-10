@@ -30,7 +30,7 @@ export async function POST(req: Request) {
     .from('user_usage')
     .select('tier, preferred_badge')
     .eq('user_id', user.id)
-    .single()
+    .maybeSingle()
 
   const tier = usage?.tier ?? 'free'
 

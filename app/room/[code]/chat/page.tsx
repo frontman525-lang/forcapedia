@@ -42,7 +42,7 @@ export default async function RoomChatRoute({ params }: Props) {
   const [messagesRes, membersRes, usageRes] = await Promise.all([
     admin.from('room_messages').select('*').eq('room_id', room.id).order('created_at', { ascending: false }).limit(100),
     admin.from('room_members').select('*').eq('room_id', room.id).is('kicked_at', null).order('joined_at'),
-    supabase.from('user_usage').select('tier').eq('user_id', user.id).order('period_start', { ascending: false }).limit(1).single(),
+    supabase.from('user_usage').select('tier').eq('user_id', user.id).maybeSingle(),
   ])
 
   const currentUser = {

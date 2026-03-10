@@ -76,14 +76,12 @@ export async function POST(req: Request) {
   const now        = new Date()
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
 
-  // Read tier without period filter (tier persists across billing periods)
+  // Read tier via user session (RLS returns the correct current row)
   const { data: tierRow } = await supabase
     .from('user_usage')
     .select('tier')
     .eq('user_id', user.id)
-    .order('period_start', { ascending: false })
-    .limit(1)
-    .single()
+    .maybeSingle()
 
   // Read tokens_used for current period only
   const { data: usageRow } = await supabase
