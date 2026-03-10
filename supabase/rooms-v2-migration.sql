@@ -25,8 +25,6 @@ ALTER TABLE room_messages
 
 -- ── session_summaries ────────────────────────────────────────────────────────
 -- Stores a permanent record of each session after it ends.
--- Kept per-tier: Free 7 days, Scholar 90 days, Researcher 6 months.
--- (Retention enforcement via a scheduled cron job — not in this migration.)
 CREATE TABLE IF NOT EXISTS session_summaries (
   id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   room_id          UUID        NOT NULL,          -- foreign key not enforced (room may be gone)
