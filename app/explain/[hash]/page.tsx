@@ -5,6 +5,8 @@ import Nav from '@/components/Nav'
 import ExplainShareActions from '@/components/ExplainShareActions'
 import { createClient } from '@/lib/supabase/server'
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://forcapedia.com'
+
 interface Props {
   params: Promise<{ hash: string }>
 }
@@ -14,15 +16,37 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const supabase = await createClient()
   const { data } = await supabase
     .from('explain_shares')
-    .select('highlighted_text')
+    .select('highlighted_text, explanation')
     .eq('hash', hash)
     .single()
 
   if (!data) return { title: 'Explanation — Forcapedia' }
-  const preview = data.highlighted_text.slice(0, 60)
+
+  const preview     = data.highlighted_text.slice(0, 80).trim()
+  const title       = `"${preview}…" — Forcapedia Explanation`
+  const description = data.explanation
+    ? (data.explanation as string).slice(0, 155).trim() + '…'
+    : 'AI-powered explanation from Forcapedia.'
+  const url         = `${SITE_URL}/explain/${hash}`
+
   return {
-    title: `"${preview}…" — Forcapedia Explanation`,
-    description: `AI-powered explanation from Forcapedia.`,
+    title,
+    description,
+    alternates: { canonical: url },
+    openGraph: {
+      title,
+      description,
+      url,
+      siteName: 'Forcapedia',
+      type:     'article',
+      images:   [{ url: '/opengraph-image', width: 1200, height: 630, alt: 'Forcapedia Explanation' }],
+    },
+    twitter: {
+      card:        'summary_large_image',
+      title,
+      description,
+      images:      ['/opengraph-image'],
+    },
   }
 }
 

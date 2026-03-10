@@ -3,7 +3,20 @@ import Link from 'next/link'
 import Nav from '@/components/Nav'
 import LegalPageFooter from '@/components/LegalPageFooter'
 
-export const metadata: Metadata = { title: 'Terms of Service - Forcapedia' }
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://forcapedia.com'
+
+export const metadata: Metadata = {
+  title:       'Terms of Service',
+  description: 'Read the Forcapedia Terms of Service. Learn about acceptable use, subscriptions, intellectual property, and your rights as a user.',
+  alternates:  { canonical: `${SITE_URL}/terms` },
+  openGraph: {
+    title:    'Terms of Service — Forcapedia',
+    url:      `${SITE_URL}/terms`,
+    siteName: 'Forcapedia',
+    type:     'website',
+  },
+  robots: { index: true, follow: true },
+}
 
 const LAST_UPDATED = 'March 5, 2026'
 

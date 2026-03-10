@@ -5,11 +5,16 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import StudyRoom from '@/components/StudyRoom'
 
+export const dynamic = 'force-dynamic'
+
 interface Props { params: Promise<{ code: string }> }
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { code } = await params
-  return { title: `Study Room ${code.toUpperCase()} — Forcapedia` }
+  return {
+    title:  `Study Room ${code.toUpperCase()}`,
+    robots: { index: false, follow: false },
+  }
 }
 
 export default async function RoomPage({ params }: Props) {

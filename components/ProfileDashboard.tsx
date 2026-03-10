@@ -82,6 +82,14 @@ export default function ProfileDashboard({ user, usage }: Props) {
   const [cancelError, setCancelError] = useState<string | null>(null)
   const [cancelledNow, setCancelledNow] = useState(false)
 
+  // Change plan
+  const [changePlanOpen,    setChangePlanOpen]    = useState(false)
+  const [changePlanTier,    setChangePlanTier]    = useState<'tier1' | 'tier2'>('tier1')
+  const [changePlanCycle,   setChangePlanCycle]   = useState<'monthly' | 'yearly'>('monthly')
+  const [changePlanLoading, setChangePlanLoading] = useState(false)
+  const [changePlanError,   setChangePlanError]   = useState<string | null>(null)
+  const [changePlanMsg,     setChangePlanMsg]     = useState<string | null>(null)
+
   // Billing history
   type BillingEvent = {
     id: string; event_type: string; provider: string
@@ -219,6 +227,78 @@ export default function ProfileDashboard({ user, usage }: Props) {
     } finally {
       setDeletingSession(null)
     }
+  }
+
+  function loadRazorpaySDK(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if ((window as any).Razorpay) { resolve(); return }
+      const existing = document.getElementById('razorpay-sdk')
+      if (existing) { existing.addEventListener('load', () => resolve()); return }
+      const script = document.createElement('script')
+      script.id      = 'razorpay-sdk'
+      script.src     = 'https://checkout.razorpay.com/v1/checkout.js'
+      script.onload  = () => resolve()
+      script.onerror = () => reject(new Error('Failed to load Razorpay SDK'))
+      document.head.appendChild(script)
+    })
+  }
+
+  async function handleChangePlan() {
+    if (!sub) return
+    setChangePlanLoading(true)
+    setChangePlanError(null)
+    setChangePlanMsg(null)
+    try {
+      const res = await fetch('/api/payments/change-plan', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ tier: changePlanTier, billingCycle: changePlanCycle, paymentProvider: 'razorpay' }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setChangePlanError(data.error ?? 'Failed to change plan'); return }
+
+      if (data.type === 'downgrade_scheduled') {
+        const name = changePlanTier === 'tier1' ? 'Scholar' : 'Researcher'
+        setChangePlanMsg(`Downgrade scheduled. Your current plan remains active until the period ends, then switches to ${name} ${changePlanCycle}.`)
+        setChangePlanOpen(false)
+        return
+      }
+
+      if (data.checkoutMode === 'razorpay_popup' && data.subscriptionId && data.keyId) {
+        const planKey  = `${changePlanTier}_${changePlanCycle}`
+        const planName = `Forcapedia ${changePlanTier === 'tier1' ? 'Scholar' : 'Researcher'} – ${changePlanCycle === 'yearly' ? 'Yearly' : 'Monthly'}`
+        try { await loadRazorpaySDK() } catch { setChangePlanError('Failed to load payment SDK.'); return }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const RzpClass = (window as any).Razorpay as new (o: unknown) => { open(): void; on(e: string, cb: (r: { error?: { description?: string } }) => void): void }
+        const rzp = new RzpClass({
+          key: data.keyId, subscription_id: data.subscriptionId,
+          name: 'Forcapedia', description: planName, theme: { color: '#C9A96E' },
+          modal: { ondismiss: () => setChangePlanLoading(false) },
+          handler: async (r: { razorpay_payment_id: string; razorpay_subscription_id: string; razorpay_signature: string }) => {
+            const vRes = await fetch('/api/payments/verify/razorpay', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ razorpay_payment_id: r.razorpay_payment_id, razorpay_subscription_id: r.razorpay_subscription_id, razorpay_signature: r.razorpay_signature }),
+            })
+            if (vRes.ok) { window.location.href = `/payment/success?plan=${planKey}` }
+            else {
+              const e = await vRes.json().catch(() => ({})) as { error?: string }
+              setChangePlanError(e.error ?? 'Payment verification failed.'); setChangePlanLoading(false)
+            }
+          },
+        })
+        rzp.on('payment.failed', (r) => { setChangePlanError(r.error?.description ?? 'Payment failed.'); setChangePlanLoading(false) })
+        rzp.open()
+        return
+      }
+
+      if (data.checkoutMode === 'redirect' && data.approvalUrl) {
+        window.location.href = data.approvalUrl; return
+      }
+
+      setChangePlanError('Unexpected response. Please try again.')
+    } catch { setChangePlanError('Network error. Please try again.') }
+    finally { setChangePlanLoading(false) }
   }
 
   async function handleCancel() {
@@ -787,21 +867,45 @@ export default function ProfileDashboard({ user, usage }: Props) {
                           </span>
                         )}
                         {!sub?.cancel_at_period_end && !cancelledNow && !subLoading && (
-                          <button
-                            onClick={() => setCancelConfirm(true)}
-                            style={{
-                              padding: '3px 10px', borderRadius: '100px',
-                              border: '1px solid rgba(244,124,124,0.3)',
-                              background: 'rgba(244,124,124,0.06)',
-                              color: 'var(--red)', fontFamily: 'var(--font-mono)',
-                              fontSize: '10px', letterSpacing: '0.06em',
-                              cursor: 'pointer', transition: 'all 0.15s',
-                            }}
-                            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(244,124,124,0.12)' }}
-                            onMouseLeave={e => { e.currentTarget.style.background = 'rgba(244,124,124,0.06)' }}
-                          >
-                            Cancel plan
-                          </button>
+                          <>
+                            <button
+                              onClick={() => {
+                                const t = (sub?.tier ?? 'tier1') as 'tier1' | 'tier2'
+                                const c = (sub?.billing_cycle ?? 'monthly') as 'monthly' | 'yearly'
+                                // Pre-select the next logical plan
+                                if (t === 'tier1' && c === 'monthly') { setChangePlanTier('tier1'); setChangePlanCycle('yearly') }
+                                else if (t === 'tier1' && c === 'yearly') { setChangePlanTier('tier2'); setChangePlanCycle('monthly') }
+                                else { setChangePlanTier('tier1'); setChangePlanCycle('monthly') }
+                                setChangePlanError(null)
+                                setChangePlanOpen(o => !o)
+                              }}
+                              style={{
+                                padding: '3px 10px', borderRadius: '100px',
+                                border: '1px solid var(--border-gold)',
+                                background: 'var(--gold-dim)',
+                                color: 'var(--gold)', fontFamily: 'var(--font-mono)',
+                                fontSize: '10px', letterSpacing: '0.06em',
+                                cursor: 'pointer', transition: 'all 0.15s',
+                              }}
+                            >
+                              Change Plan
+                            </button>
+                            <button
+                              onClick={() => setCancelConfirm(true)}
+                              style={{
+                                padding: '3px 10px', borderRadius: '100px',
+                                border: '1px solid rgba(244,124,124,0.3)',
+                                background: 'rgba(244,124,124,0.06)',
+                                color: 'var(--red)', fontFamily: 'var(--font-mono)',
+                                fontSize: '10px', letterSpacing: '0.06em',
+                                cursor: 'pointer', transition: 'all 0.15s',
+                              }}
+                              onMouseEnter={e => { e.currentTarget.style.background = 'rgba(244,124,124,0.12)' }}
+                              onMouseLeave={e => { e.currentTarget.style.background = 'rgba(244,124,124,0.06)' }}
+                            >
+                              Cancel plan
+                            </button>
+                          </>
                         )}
                       </>
                     ) : (
@@ -860,6 +964,131 @@ export default function ProfileDashboard({ user, usage }: Props) {
                         Keep plan
                       </button>
                     </div>
+                  </div>
+                )}
+
+                {/* Change plan inline panel */}
+                {changePlanOpen && sub && (
+                  <div style={{
+                    marginBottom: '1rem', padding: '1rem', borderRadius: '10px',
+                    background: 'var(--ink-2)', border: '1px solid var(--border-gold)',
+                  }}>
+                    <p style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-tertiary)', marginBottom: '0.75rem' }}>
+                      Select a new plan
+                    </p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '0.5rem', marginBottom: '1rem' }}>
+                      {([
+                        { tier: 'tier1' as const, cycle: 'monthly' as const, name: 'Scholar',    price: '₹499/mo',    desc: '2M tokens / month' },
+                        { tier: 'tier1' as const, cycle: 'yearly'  as const, name: 'Scholar',    price: '₹4,999/yr',  desc: 'Save ~16%' },
+                        { tier: 'tier2' as const, cycle: 'monthly' as const, name: 'Researcher', price: '₹1,099/mo',  desc: '4M tokens / month' },
+                        { tier: 'tier2' as const, cycle: 'yearly'  as const, name: 'Researcher', price: '₹9,999/yr',  desc: 'Save ~24%' },
+                      ]).map(opt => {
+                        const isCurrent  = sub.tier === opt.tier && sub.billing_cycle === opt.cycle
+                        const isSelected = changePlanTier === opt.tier && changePlanCycle === opt.cycle
+                        return (
+                          <button
+                            key={`${opt.tier}_${opt.cycle}`}
+                            disabled={isCurrent}
+                            onClick={() => { setChangePlanTier(opt.tier); setChangePlanCycle(opt.cycle) }}
+                            style={{
+                              padding: '0.625rem 0.75rem', borderRadius: '8px', textAlign: 'left',
+                              border: isCurrent
+                                ? '1px solid var(--border)'
+                                : isSelected
+                                  ? '1px solid var(--border-gold)'
+                                  : '1px solid var(--border)',
+                              background: isCurrent
+                                ? 'var(--ink-3)'
+                                : isSelected
+                                  ? 'var(--gold-dim)'
+                                  : 'var(--ink-3)',
+                              cursor: isCurrent ? 'default' : 'pointer',
+                              opacity: isCurrent ? 0.5 : 1,
+                              transition: 'all 0.15s',
+                            }}
+                          >
+                            <div style={{ fontFamily: 'var(--font-sans)', fontSize: '12px', fontWeight: 500, color: isSelected && !isCurrent ? 'var(--gold)' : 'var(--text-primary)', marginBottom: '2px' }}>
+                              {opt.name} {opt.cycle === 'yearly' ? 'Yearly' : 'Monthly'}
+                              {isCurrent && <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--text-tertiary)', marginLeft: '6px' }}>current</span>}
+                            </div>
+                            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: isSelected && !isCurrent ? 'var(--gold)' : 'var(--text-tertiary)' }}>
+                              {opt.price} · {opt.desc}
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+
+                    {(() => {
+                      const TIER_LVL: Record<string, number> = { free: 0, tier1: 1, tier2: 2 }
+                      const CYCLE_LVL: Record<string, number> = { monthly: 0, yearly: 1 }
+                      const isSamePlan = changePlanTier === sub.tier && changePlanCycle === sub.billing_cycle
+                      const isUpgrade  = !isSamePlan && (
+                        TIER_LVL[changePlanTier] > TIER_LVL[sub.tier] ||
+                        (changePlanTier === sub.tier && CYCLE_LVL[changePlanCycle] > CYCLE_LVL[sub.billing_cycle as string])
+                      )
+                      return !isSamePlan ? (
+                        <div style={{
+                          marginBottom: '0.875rem', padding: '0.625rem 0.75rem', borderRadius: '8px',
+                          background: isUpgrade ? 'rgba(244,124,124,0.04)' : 'rgba(201,169,110,0.04)',
+                          border: `1px solid ${isUpgrade ? 'rgba(244,124,124,0.18)' : 'rgba(201,169,110,0.18)'}`,
+                        }}>
+                          <p style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: isUpgrade ? 'rgba(244,124,124,0.85)' : 'var(--text-tertiary)', lineHeight: 1.6, margin: 0 }}>
+                            {isUpgrade
+                              ? 'Your current plan will be cancelled immediately. You\'ll be taken to checkout — if you close it without paying, contact support to restore access.'
+                              : 'Your current plan stays active until the end of the billing period, then switches to the new plan.'}
+                          </p>
+                        </div>
+                      ) : null
+                    })()}
+
+                    {changePlanError && (
+                      <p style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--red)', marginBottom: '0.75rem' }}>
+                        {changePlanError}
+                      </p>
+                    )}
+
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <button
+                        onClick={handleChangePlan}
+                        disabled={changePlanLoading || (changePlanTier === sub.tier && changePlanCycle === sub.billing_cycle)}
+                        style={{
+                          padding: '0.4rem 1rem', borderRadius: '8px',
+                          border: '1px solid var(--border-gold)', background: 'var(--gold-dim)',
+                          color: 'var(--gold)', fontFamily: 'var(--font-sans)',
+                          fontSize: '12px', fontWeight: 500,
+                          cursor: (changePlanLoading || (changePlanTier === sub.tier && changePlanCycle === sub.billing_cycle)) ? 'default' : 'pointer',
+                          opacity: (changePlanLoading || (changePlanTier === sub.tier && changePlanCycle === sub.billing_cycle)) ? 0.5 : 1,
+                        }}
+                      >
+                        {changePlanLoading ? 'Processing…' : 'Confirm change'}
+                      </button>
+                      <button
+                        onClick={() => { setChangePlanOpen(false); setChangePlanError(null) }}
+                        disabled={changePlanLoading}
+                        style={{
+                          padding: '0.4rem 1rem', borderRadius: '8px',
+                          border: '1px solid var(--border)', background: 'none',
+                          color: 'var(--text-secondary)', fontFamily: 'var(--font-sans)',
+                          fontSize: '12px', cursor: changePlanLoading ? 'default' : 'pointer',
+                          opacity: changePlanLoading ? 0.5 : 1,
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Downgrade / change-plan confirmation message */}
+                {changePlanMsg && (
+                  <div style={{
+                    marginBottom: '1rem', padding: '0.75rem 1rem', borderRadius: '10px',
+                    background: 'rgba(201,169,110,0.06)', border: '1px solid var(--border-gold)',
+                  }}>
+                    <p style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--gold)', margin: 0 }}>
+                      {changePlanMsg}
+                    </p>
                   </div>
                 )}
 

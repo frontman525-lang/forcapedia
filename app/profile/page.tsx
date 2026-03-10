@@ -7,7 +7,10 @@ import HomeBackground from '@/components/HomeBackground'
 import ParticleCanvas from '@/components/ParticleCanvas'
 
 export const dynamic  = 'force-dynamic'   // always fetch fresh data — never serve cached tier info
-export const metadata: Metadata = { title: 'Account — Forcapedia' }
+export const metadata: Metadata = {
+  title:  'Account',
+  robots: { index: false, follow: false },
+}
 
 export default async function ProfilePage() {
   const supabase = await createClient()

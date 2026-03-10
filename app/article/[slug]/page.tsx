@@ -29,29 +29,35 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!article) {
     // Article is being generated client-side — derive readable title from slug
     const displayTitle = slug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
-    return { title: `${displayTitle} — Forcapedia` }
+    return {
+      title:  `${displayTitle} — Forcapedia`,
+      robots: { index: false, follow: false }, // don't index pending/generating articles
+    }
   }
 
-  const url   = `${SITE_URL}/article/${slug}`
-  const title = `${article.title} — Forcapedia`
+  const url      = `${SITE_URL}/article/${slug}`
+  const title    = `${article.title} — Forcapedia`
+  const ogImage  = `/article/${slug}/opengraph-image`
 
   return {
     title,
     description: article.summary,
-    alternates: { canonical: url },
+    alternates:  { canonical: url },
     openGraph: {
       title,
-      description: article.summary,
+      description:   article.summary,
       url,
       siteName:      'Forcapedia',
       type:          'article',
       publishedTime: article.created_at,
       modifiedTime:  article.verified_at,
+      images:        [{ url: ogImage, width: 1200, height: 630, alt: article.title }],
     },
     twitter: {
-      card:        'summary',
+      card:        'summary_large_image',
       title,
       description: article.summary,
+      images:      [ogImage],
     },
   }
 }

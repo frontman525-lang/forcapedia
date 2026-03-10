@@ -3,7 +3,20 @@ import Link from 'next/link'
 import Nav from '@/components/Nav'
 import LegalPageFooter from '@/components/LegalPageFooter'
 
-export const metadata: Metadata = { title: 'Privacy Policy - Forcapedia' }
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://forcapedia.com'
+
+export const metadata: Metadata = {
+  title:       'Privacy Policy',
+  description: 'Read the Forcapedia Privacy Policy. Understand what data we collect, how we use it, and your rights including access, correction, and deletion.',
+  alternates:  { canonical: `${SITE_URL}/privacy` },
+  openGraph: {
+    title:    'Privacy Policy — Forcapedia',
+    url:      `${SITE_URL}/privacy`,
+    siteName: 'Forcapedia',
+    type:     'website',
+  },
+  robots: { index: true, follow: true },
+}
 
 const LAST_UPDATED = 'February 27, 2026'
 

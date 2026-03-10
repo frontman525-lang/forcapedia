@@ -3,7 +3,20 @@ import Link from 'next/link'
 import Nav from '@/components/Nav'
 import LegalPageFooter from '@/components/LegalPageFooter'
 
-export const metadata: Metadata = { title: 'Refund Policy - Forcapedia' }
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://forcapedia.com'
+
+export const metadata: Metadata = {
+  title:       'Refund Policy',
+  description: 'Read the Forcapedia Refund Policy. Learn about eligibility windows, token usage rules, and how to submit a refund request.',
+  alternates:  { canonical: `${SITE_URL}/refund` },
+  openGraph: {
+    title:    'Refund Policy — Forcapedia',
+    url:      `${SITE_URL}/refund`,
+    siteName: 'Forcapedia',
+    type:     'website',
+  },
+  robots: { index: true, follow: true },
+}
 
 const LAST_UPDATED = 'February 24, 2026'
 

@@ -43,7 +43,8 @@
       "WebFetch(domain:www.notion.so)",
       "WebFetch(domain:linear.app)",
       "WebFetch(domain:docs.github.com)",
-      "Bash(npx vercel --prod)"
+      "Bash(npx vercel --prod)",
+      "WebSearch"
     ]
   }
 }

@@ -4,9 +4,12 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import StudyLobby from '@/components/StudyLobby'
 
+export const dynamic = 'force-dynamic'
+
 export const metadata: Metadata = {
-  title: 'Study Together — Forcapedia',
+  title:       'Study Together',
   description: 'Create or join a live study room and learn together.',
+  robots:      { index: false, follow: false },
 }
 
 interface RecentRoom {
@@ -26,7 +29,7 @@ export default async function StudyPage() {
   const admin = createAdminClient()
 
   const [usageRes, membershipsRes] = await Promise.all([
-    supabase.from('user_usage').select('tier, preferred_badge').eq('user_id', user.id).single(),
+    admin.from('user_usage').select('tier, preferred_badge').eq('user_id', user.id).single(),
     admin
       .from('room_members')
       .select('joined_at, study_rooms(code, room_name, article_title, status, created_at)')

@@ -179,6 +179,17 @@ export async function POST(req: Request) {
       console.log('[generate] duplicate slug — article already saved by concurrent request')
     } else {
       console.log(`[generate] ✓ saved /${slug}`)
+      // IndexNow: notify Bing, DuckDuckGo, Yandex instantly — fire-and-forget
+      void fetch('https://api.indexnow.org/indexnow', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          host:    new URL(process.env.NEXT_PUBLIC_SITE_URL ?? 'https://forcapedia.com').hostname,
+          key:     process.env.INDEXNOW_API_KEY,
+          keyLocation: `${process.env.NEXT_PUBLIC_SITE_URL ?? 'https://forcapedia.com'}/${process.env.INDEXNOW_API_KEY}.txt`,
+          urlList: [`${process.env.NEXT_PUBLIC_SITE_URL ?? 'https://forcapedia.com'}/article/${slug}`],
+        }),
+      }).catch(() => {}) // never block the stream — silently ignore network failures
     }
 
     // ── c. Charge tokens (non-blocking — never fail the done event) ──

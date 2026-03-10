@@ -6,7 +6,25 @@ import PricingPlans from '@/components/PricingPlans'
 import HomeBackground from '@/components/HomeBackground'
 import ParticleCanvas from '@/components/ParticleCanvas'
 
-export const metadata: Metadata = { title: 'Pricing - Forcapedia' }
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://forcapedia.com'
+
+export const metadata: Metadata = {
+  title:       'Pricing',
+  description: 'Choose a Forcapedia plan. Scholar and Researcher tiers unlock more articles, study rooms, and AI-powered explanations. Monthly or yearly billing.',
+  alternates:  { canonical: `${SITE_URL}/pricing` },
+  openGraph: {
+    title:       'Pricing — Forcapedia',
+    description: 'Scholar and Researcher plans with monthly or yearly billing. Unlock more knowledge.',
+    url:         `${SITE_URL}/pricing`,
+    siteName:    'Forcapedia',
+    type:        'website',
+  },
+  twitter: {
+    card:        'summary_large_image',
+    title:       'Pricing — Forcapedia',
+    description: 'Scholar and Researcher plans with monthly or yearly billing.',
+  },
+}
 
 interface Props {
   searchParams: Promise<{ billing?: string }>

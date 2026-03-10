@@ -1,3 +1,4 @@
+import type { Metadata } from 'next'
 import Link from 'next/link'
 import Nav from '@/components/Nav'
 import SearchBox from '@/components/SearchBox'
@@ -5,9 +6,32 @@ import HomeBackground from '@/components/HomeBackground'
 import ParticleCanvas from '@/components/ParticleCanvas'
 import RecentVerified from '@/components/RecentVerified'
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://forcapedia.com'
+
+export const metadata: Metadata = {
+  title:       'Forcapedia — The Living Encyclopedia',
+  description: 'A living, verified knowledge platform. Historical depth meets live intelligence. Every article carries a verified date stamp.',
+  alternates:  { canonical: SITE_URL },
+  openGraph:   { title: 'Forcapedia — The Living Encyclopedia', url: SITE_URL },
+}
+
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type':    'WebSite',
+  name:        'Forcapedia',
+  url:         SITE_URL,
+  description: 'A living, verified knowledge platform. Historical depth meets live intelligence.',
+  potentialAction: {
+    '@type': 'SearchAction',
+    target: { '@type': 'EntryPoint', urlTemplate: `${SITE_URL}/search?q={search_term_string}` },
+    'query-input': 'required name=search_term_string',
+  },
+}
+
 export default function HomePage() {
   return (
     <>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
       <Nav />
 
       {/* Layer 0: #000 base + 20 static CSS stars */}
