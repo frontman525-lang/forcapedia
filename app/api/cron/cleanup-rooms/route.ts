@@ -65,14 +65,16 @@ export async function GET(req: Request) {
         .eq('id', ghost.id)
 
       // System message
-      await admin.from('room_messages').insert({
-        room_id:      room.id,
-        user_id:      ghost.user_id,
-        display_name: ghost.display_name,
-        avatar_color: ghost.avatar_color,
-        content:      `${ghost.display_name} disconnected`,
-        kind:         'system',
-      }).catch(() => null)
+      try {
+        await admin.from('room_messages').insert({
+          room_id:      room.id,
+          user_id:      ghost.user_id,
+          display_name: ghost.display_name,
+          avatar_color: ghost.avatar_color,
+          content:      `${ghost.display_name} disconnected`,
+          kind:         'system',
+        })
+      } catch { /* ignore message insert failure */ }
 
       // Broadcast to remaining members
       await broadcast(ch.presence(room.code), 'member_left', { userId: ghost.user_id })
