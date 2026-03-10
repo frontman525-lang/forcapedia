@@ -15,7 +15,7 @@ export interface InvoiceEmailProps {
   planName:      string   // "Scholar"
   amount:        string   // "7.99"
   currency:      string   // "USD"
-  billingPeriod: string   // "Feb 26, 2026 – Mar 26, 2026"
+  billingPeriod: string   // "Feb 26, 2026 – Mar 26, 2026
 }
 
 export function InvoiceEmail({

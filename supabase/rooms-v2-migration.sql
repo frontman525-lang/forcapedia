@@ -24,7 +24,7 @@ ALTER TABLE room_messages
   CHECK (kind IN ('text', 'explain', 'highlight', 'system', 'doubt'));
 
 -- ── session_summaries ────────────────────────────────────────────────────────
--- Stores a permanent record of each session after it ends.
+
 CREATE TABLE IF NOT EXISTS session_summaries (
   id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
   room_id          UUID        NOT NULL,          -- foreign key not enforced (room may be gone)
