@@ -58,6 +58,7 @@ export default async function RoomPage({ params }: Props) {
       .from('subscriptions')
       .select('tier, status, cancel_at_period_end, current_period_end')
       .eq('user_id', user.id)
+      .in('status', ['active', 'past_due', 'cancelled'])
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()

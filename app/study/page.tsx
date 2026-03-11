@@ -30,11 +30,12 @@ export default async function StudyPage() {
 
   const [usageRes, subRes, membershipsRes] = await Promise.all([
     admin.from('user_usage').select('tier, preferred_badge').eq('user_id', user.id).maybeSingle(),
-    // Authoritative tier: most recent sub regardless of status
+    // Authoritative tier: most recent REAL sub (exclude pending/expired checkout rows)
     admin
       .from('subscriptions')
       .select('tier, status, cancel_at_period_end, current_period_end')
       .eq('user_id', user.id)
+      .in('status', ['active', 'past_due', 'cancelled'])
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle(),

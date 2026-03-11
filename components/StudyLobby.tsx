@@ -55,16 +55,6 @@ function tierLabel(tier: string) {
 
 // ── Inline SVG icons ──────────────────────────────────────────────────────────
 
-function BookScrollIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-      <line x1="9" y1="7" x2="15" y2="7" />
-      <line x1="9" y1="11" x2="13" y2="11" />
-    </svg>
-  )
-}
 
 function PlusIcon() {
   return (
@@ -251,18 +241,21 @@ function ActionTile({
 // ── Avatar initials circle ────────────────────────────────────────────────────
 
 function AvatarCircle({ name, size, src }: { name: string; size: number; src?: string | null }) {
-  if (src) {
+  const [imgFailed, setImgFailed] = useState(false)
+  const colors = ['#C9A96E','#7FB7F7','#6FCF97','#F47C7C','#A78BFA']
+  const color  = colors[(name.charCodeAt(0) || 0) % colors.length]
+
+  if (src && !imgFailed) {
     return (
       <img
         src={src}
         alt={name}
         width={size} height={size}
         style={{ borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
+        onError={() => setImgFailed(true)}
       />
     )
   }
-  const colors = ['#C9A96E','#7FB7F7','#6FCF97','#F47C7C','#A78BFA']
-  const color  = colors[(name.charCodeAt(0) || 0) % colors.length]
   return (
     <div style={{
       width: size, height: size, borderRadius: '50%',
@@ -545,8 +538,12 @@ export default function StudyLobby({
       }}>
 
         {/* Left: Logo */}
-        <Link href="/" style={{ color: 'var(--gold)', textDecoration: 'none', display: 'flex', alignItems: 'center' }}>
-          <BookScrollIcon />
+        <Link href="/" style={{
+          color: 'var(--gold)', textDecoration: 'none',
+          fontFamily: 'var(--font-sans)', fontSize: '15px', fontWeight: 600,
+          letterSpacing: '0.01em',
+        }}>
+          Forcapedia
         </Link>
 
         {/* Center: Tabs */}
