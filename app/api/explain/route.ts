@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getEffectiveTier } from '@/lib/getEffectiveTier'
+import { getVertexToken, getVertexEndpoint, isVertexConfigured, VERTEX_MODEL } from '@/lib/vertexai'
 
 const DAILY_LIMITS = { free: 1, tier1: 40, tier2: 80 } as const
 
@@ -61,30 +62,40 @@ export async function POST(req: NextRequest) {
     }, { status: 429 })
   }
 
-  // ── Call Groq (streaming) ─────────────────────────────────────────────────
-  const apiKey = process.env.GROQ_API_KEY
-  if (!apiKey) return NextResponse.json({ error: 'AI unavailable.' }, { status: 503 })
+  // ── Try providers in order: Vertex → Groq → Gemini (streaming) ──────────
+  interface ExplainProvider { name: string; token: string; endpoint: string; model: string }
+  const explainProviders: ExplainProvider[] = []
 
-  const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'llama-3.1-8b-instant',
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPTS[mode as 'simple' | 'eli10'] },
-        { role: 'user', content: `Explain this: "${text.trim()}"` },
-      ],
-      temperature: 0.6,
-      max_tokens: getMaxTokens(text.trim().length),
-      stream: true,
-    }),
-    signal: AbortSignal.timeout(30_000),
-  }).catch(() => null)
+  if (isVertexConfigured()) {
+    try {
+      explainProviders.push({ name: 'vertex', token: await getVertexToken(), endpoint: getVertexEndpoint(), model: VERTEX_MODEL })
+    } catch { /* misconfigured — skip */ }
+  }
+  if (process.env.GROQ_API_KEY) {
+    explainProviders.push({ name: 'groq', token: process.env.GROQ_API_KEY, endpoint: 'https://api.groq.com/openai/v1/chat/completions', model: 'llama-3.1-8b-instant' })
+  }
+  if (process.env.GEMINI_API_KEY) {
+    explainProviders.push({ name: 'gemini', token: process.env.GEMINI_API_KEY, endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', model: 'gemini-2.0-flash-lite' })
+  }
 
-  if (!groqRes?.ok) {
+  const messages = [
+    { role: 'system', content: SYSTEM_PROMPTS[mode as 'simple' | 'eli10'] },
+    { role: 'user', content: `Explain this: "${text.trim()}"` },
+  ]
+  const maxTok = getMaxTokens(text.trim().length)
+
+  let aiRes: Response | null = null
+  for (const p of explainProviders) {
+    const r = await fetch(p.endpoint, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${p.token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: p.model, messages, temperature: 0.6, max_tokens: maxTok, stream: true }),
+      signal: AbortSignal.timeout(30_000),
+    }).catch(() => null)
+    if (r?.ok) { aiRes = r; break }
+  }
+
+  if (!aiRes) {
     return NextResponse.json({ error: 'AI generation failed. Please try again.' }, { status: 503 })
   }
 
@@ -111,7 +122,7 @@ export async function POST(req: NextRequest) {
         encoder.encode(`data: ${JSON.stringify({ type: 'usage', used: newCount, limit })}\n\n`)
       )
 
-      const reader = groqRes.body!.getReader()
+      const reader = aiRes!.body!.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
 

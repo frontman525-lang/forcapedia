@@ -6,8 +6,10 @@
 //  generateArticle(topic, wiki?) — non-streaming, returns complete article.
 //    Used as DeepSeek last resort inside streamArticle.
 //
-//  streamArticle(topic, wiki?, callbacks, signal?) — streaming with hedged
-//    concurrency (Groq first, Gemini hedge at 5s, DeepSeek non-stream fallback).
+//  streamArticle(topic, wiki?, callbacks, signal?) — streaming with sequential
+//    fallback. Provider chain:
+//      Stage 1: Vertex AI → Groq → Gemini (each tried in order; next only on failure).
+//      Stage 2: DeepSeek non-streaming fallback if all Stage 1 fail.
 //    Emits: onMeta → onChunk × N → returns GeneratedArticle.
 //
 //  Dynamic length: AI auto-classifies topic into SIMPLE / MEDIUM / COMPLEX /
@@ -18,6 +20,8 @@
 //
 //  SERVER-SIDE ONLY. Never import in client components.
 // ══════════════════════════════════════════════════════════════
+
+import { getVertexToken, getVertexEndpoint, isVertexConfigured, VERTEX_MODEL } from './vertexai'
 
 export interface GeneratedArticle {
   title: string
@@ -30,29 +34,47 @@ export interface GeneratedArticle {
 }
 
 // ─── Tuning constants ──────────────────────────────────────────
-// Fire Gemini this many ms after Groq if no first chunk from Groq yet.
-const HEDGE_AFTER_MS    = 5_000
 // Abort a provider if no first chunk within this long.
-const FIRST_CHUNK_MS    = 10_000
+const FIRST_CHUNK_MS = 10_000
+// Start backup provider if primary hasn't committed (sent onMeta) within this long.
+// Vertex normally commits in 4–6 s; 8 s hedge gives it room while protecting UX.
+const HEDGE_AFTER_MS = 8_000
 // Cap Wikipedia grounding text.
-const WIKI_MAX_CHARS    = 2_500
+const WIKI_MAX_CHARS = 2_500
 
 // ─── Provider registry ─────────────────────────────────────────
 interface ProviderConfig {
   name: string
-  apiKeyEnv: string
-  endpoint: string
+  apiKeyEnv: string                          // primary env var; used for isConfigured check
+  getToken?: () => Promise<string>           // if set, use instead of process.env[apiKeyEnv]
+  endpoint: string | (() => string)          // string or dynamic function
   model: string
   timeoutMs: number
   jsonMode: boolean
+  maxTokens?: number                         // override default 10_000 (e.g. Vertex caps at 8192)
+}
+
+function isProviderReady(p: ProviderConfig): boolean {
+  if (p.name === 'vertex') return isVertexConfigured()
+  return !!process.env[p.apiKeyEnv]
 }
 
 const PROVIDERS: ProviderConfig[] = [
   {
+    name: 'vertex',
+    apiKeyEnv: 'VERTEX_PROJECT_ID',
+    getToken: getVertexToken,
+    endpoint: getVertexEndpoint,
+    model: VERTEX_MODEL,
+    timeoutMs: 45_000,
+    jsonMode: false,
+    maxTokens: 8_000,   // gemini-2.0-flash-001 supports max 8192
+  },
+  {
     name: 'groq',
     apiKeyEnv: 'GROQ_API_KEY',
     endpoint: 'https://api.groq.com/openai/v1/chat/completions',
-    model: 'llama-3.3-70b-versatile',  // 70b: better instruction-following, 32k output
+    model: 'llama-3.3-70b-versatile',
     timeoutMs: 45_000,
     jsonMode: true,
   },
@@ -220,8 +242,10 @@ async function* streamProviderRaw(
   wikiContent: string | undefined,
   signal: AbortSignal,
 ): AsyncGenerator<string> {
-  const apiKey = process.env[config.apiKeyEnv]
+  const apiKey = config.getToken ? await config.getToken() : process.env[config.apiKeyEnv]
   if (!apiKey) throw new Error(`${config.name}: ${config.apiKeyEnv} not configured`)
+
+  const endpoint = typeof config.endpoint === 'function' ? config.endpoint() : config.endpoint
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), config.timeoutMs)
@@ -232,7 +256,7 @@ async function* streamProviderRaw(
 
   let response: Response
   try {
-    response = await fetch(config.endpoint, {
+    response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -244,7 +268,7 @@ async function* streamProviderRaw(
           { role: 'system', content: STREAM_SYSTEM_PROMPT },
           { role: 'user',   content: buildUserMessage(topic, wikiContent) },
         ],
-        max_tokens: 10_000,
+        max_tokens: config.maxTokens ?? 10_000,
         temperature: 0.2,
         stream: true,
         // No response_format — custom text format, not JSON
@@ -405,17 +429,138 @@ async function streamProvider(
   }
 }
 
+// ─── Hedged race: primary starts immediately, backup joins after HEDGE_AFTER_MS ─
+//
+// Whoever fires onMeta first WINS — the other is aborted instantly.
+// If primary errors before the hedge timer fires, backup starts immediately.
+// If only one provider is available, falls back to a simple sequential attempt.
+//
+async function runHedged(
+  primary: ProviderConfig | undefined,
+  backup: ProviderConfig | undefined,
+  topic: string,
+  grounding: string | undefined,
+  callbacks: StreamCallbacks,
+  callerSignal: AbortSignal,
+): Promise<{ winner: string; article: GeneratedArticle } | null> {
+  if (!primary && !backup) return null
+
+  // Only one provider available — simple attempt, no hedge needed
+  if (!primary || !backup) {
+    const p = (primary ?? backup)!
+    let committed = false
+    const wrapped: StreamCallbacks = {
+      onMeta: (m) => { committed = true; callbacks.onMeta(m) },
+      onChunk: callbacks.onChunk,
+    }
+    try {
+      const article = await streamProvider(p, topic, grounding, wrapped, callerSignal)
+      return committed ? { winner: p.name, article } : null
+    } catch (e) {
+      if (committed) throw e
+      console.warn(`[ai] ✗ ${p.name}: ${e instanceof Error ? e.message : String(e)}`)
+      return null
+    }
+  }
+
+  // Both available — run hedged race
+  // Capture as non-undefined locals so TypeScript can narrow inside async callbacks
+  const primaryP: ProviderConfig = primary
+  const backupP: ProviderConfig  = backup
+
+  return new Promise<{ winner: string; article: GeneratedArticle } | null>((resolve, reject) => {
+    let winnerName: string | null = null
+    let resolved      = false
+    let primaryDone   = false
+    let backupStarted = false
+    let backupDone    = false
+    let hedgeTimer: ReturnType<typeof setTimeout> | null = null
+
+    const primaryAbort = new AbortController()
+    const backupAbort  = new AbortController()
+
+    const onCallerAbort = () => { primaryAbort.abort(); backupAbort.abort() }
+    callerSignal.addEventListener('abort', onCallerAbort, { once: true })
+
+    function settle(value: { winner: string; article: GeneratedArticle } | null, err?: unknown) {
+      if (resolved) return
+      resolved = true
+      if (hedgeTimer) { clearTimeout(hedgeTimer); hedgeTimer = null }
+      callerSignal.removeEventListener('abort', onCallerAbort)
+      if (err !== undefined) reject(err)
+      else resolve(value)
+    }
+
+    function makeCallbacks(name: string, otherAbort: AbortController): StreamCallbacks {
+      return {
+        onMeta: (meta) => {
+          if (winnerName !== null) return               // other already committed
+          winnerName = name
+          otherAbort.abort()                            // cancel the loser
+          if (hedgeTimer) { clearTimeout(hedgeTimer); hedgeTimer = null }
+          callbacks.onMeta(meta)
+        },
+        onChunk: (html) => {
+          if (winnerName === name) callbacks.onChunk(html)
+        },
+      }
+    }
+
+    function startBackup() {
+      if (backupStarted || resolved) return
+      backupStarted = true
+      console.log(`[ai] hedge: ${backupP.name} starting concurrently`)
+      streamProvider(backupP, topic, grounding, makeCallbacks(backupP.name, primaryAbort), backupAbort.signal)
+        .then(article => {
+          backupDone = true
+          if (winnerName === backupP.name) settle({ winner: backupP.name, article })
+          else if (!resolved && primaryDone) settle(null)
+        })
+        .catch(e => {
+          backupDone = true
+          if (winnerName === backupP.name) { settle(null, e); return }  // mid-stream failure
+          console.warn(`[ai] ✗ ${backupP.name} (hedge): ${e instanceof Error ? e.message : String(e)}`)
+          if (primaryDone && !resolved) settle(null)
+        })
+    }
+
+    // Start primary immediately
+    streamProvider(primaryP, topic, grounding, makeCallbacks(primaryP.name, backupAbort), primaryAbort.signal)
+      .then(article => {
+        primaryDone = true
+        if (winnerName === primaryP.name) settle({ winner: primaryP.name, article })
+        else if (!resolved && (!backupStarted || backupDone)) settle(null)
+      })
+      .catch(e => {
+        primaryDone = true
+        if (winnerName === primaryP.name) { settle(null, e); return }   // mid-stream failure
+        console.warn(`[ai] ✗ ${primaryP.name}: ${e instanceof Error ? e.message : String(e)} — starting ${backupP.name} immediately`)
+        if (hedgeTimer) { clearTimeout(hedgeTimer); hedgeTimer = null }
+        startBackup()
+        if (backupDone && !resolved) settle(null)
+      })
+
+    // Hedge: if primary hasn't committed in HEDGE_AFTER_MS, start backup concurrently
+    hedgeTimer = setTimeout(() => {
+      hedgeTimer = null
+      if (winnerName === null && !resolved) startBackup()
+    }, HEDGE_AFTER_MS)
+  })
+}
+
 // ─── Public streaming API ──────────────────────────────────────
 /**
- * Stream article generation with hedged Groq + Gemini, DeepSeek fallback.
+ * Stream article generation with hedged race + sequential fallback.
  *
  * Strategy:
- *   1. Start Groq streaming immediately.
- *   2. If Groq hasn't sent a first chunk after HEDGE_AFTER_MS, start Gemini in parallel.
- *   3. Whichever provider's first chunk arrives first "wins" — the other is aborted.
- *   4. If both fail, fall back to non-streaming DeepSeek.
- *
- * Callbacks are called from whichever provider wins.
+ *   Stage 1 — Hedged race (Vertex + Groq):
+ *     Vertex starts at t=0. If it hasn't committed (fired onMeta) within
+ *     HEDGE_AFTER_MS (8 s), Groq starts concurrently. Whoever commits first
+ *     wins; the other is aborted. If Vertex errors before the hedge fires,
+ *     Groq starts immediately. On normal days Vertex commits in 4–6 s so
+ *     Groq is never called — credits are always used first.
+ *   Stage 2 — Gemini sequential fallback (if both Stage 1 providers fail).
+ *   Stage 3 — DeepSeek non-streaming last resort (if all streaming fail).
  */
 export async function streamArticle(
   topic: string,
@@ -423,105 +568,56 @@ export async function streamArticle(
   callbacks: StreamCallbacks,
   signal?: AbortSignal,
 ): Promise<GeneratedArticle> {
-  const grounding = wikiContent?.slice(0, WIKI_MAX_CHARS)
-  const mode      = grounding ? 'wiki' : 'ai'
-
-  const groq     = PROVIDERS.find(p => p.name === 'groq'     && process.env[p.apiKeyEnv])
-  const gemini   = PROVIDERS.find(p => p.name === 'gemini'   && process.env[p.apiKeyEnv])
-  const deepseek = PROVIDERS.find(p => p.name === 'deepseek' && process.env[p.apiKeyEnv])
-
+  const grounding    = wikiContent?.slice(0, WIKI_MAX_CHARS)
+  const mode         = grounding ? 'wiki' : 'ai'
   const callerSignal = signal ?? new AbortController().signal
+  const t0           = Date.now()
 
-  // ── Stage 1: hedged Groq + Gemini streaming ───────────────────
-  if (groq || gemini) {
-    const t0 = Date.now()
+  const vertex   = PROVIDERS.find(p => p.name === 'vertex'   && isProviderReady(p))
+  const groq     = PROVIDERS.find(p => p.name === 'groq'     && isProviderReady(p))
+  const gemini   = PROVIDERS.find(p => p.name === 'gemini'   && isProviderReady(p))
+  const deepseek = PROVIDERS.find(p => p.name === 'deepseek' && isProviderReady(p))
 
-    // Shared "winner committed" flag — only one provider's callbacks fire
-    let committed     = false
-    let winnerName    = ''
-
-    const groqAbort   = new AbortController()
-    const geminiAbort = new AbortController()
-
-    // Wrap callbacks so only the first provider to call onMeta "wins"
-    const makeWrapped = (name: string, otherAbort: AbortController): StreamCallbacks => ({
-      onMeta: (meta) => {
-        if (committed) return
-        committed  = true
-        winnerName = name
-        otherAbort.abort()   // kill the other provider
-        callbacks.onMeta(meta)
-      },
-      onChunk: (html) => {
-        if (winnerName === name) callbacks.onChunk(html)
-      },
-    })
-
-    const groqWrapped   = makeWrapped('groq',   geminiAbort)
-    const geminiWrapped = makeWrapped('gemini', groqAbort)
-
-    // Abort both if caller cancels
-    const onCallerAbort = () => { groqAbort.abort(); geminiAbort.abort() }
-    callerSignal.addEventListener('abort', onCallerAbort, { once: true })
-
-    let groqResult:   GeneratedArticle | Error | null = null
-    let geminiResult: GeneratedArticle | Error | null = null
-
-    // Start Groq immediately
-    const groqPromise = groq
-      ? streamProvider(groq, topic, grounding, groqWrapped, groqAbort.signal)
-          .then(r => { groqResult = r; return r })
-          .catch(e => { groqResult = e instanceof Error ? e : new Error(String(e)); return null })
-      : Promise.resolve(null)
-
-    // Start Gemini after HEDGE_AFTER_MS (or immediately if no Groq)
-    const geminiDelay = groq ? HEDGE_AFTER_MS : 0
-    const geminiPromise = gemini
-      ? new Promise<GeneratedArticle | null>(resolve => {
-          const t = setTimeout(async () => {
-            if (geminiAbort.signal.aborted) { resolve(null); return }
-            const result = await streamProvider(gemini, topic, grounding, geminiWrapped, geminiAbort.signal)
-              .then(r => { geminiResult = r; return r })
-              .catch(e => { geminiResult = e instanceof Error ? e : new Error(String(e)); return null })
-            resolve(result)
-          }, geminiDelay)
-          // If caller aborts before hedge fires, cancel the timer
-          geminiAbort.signal.addEventListener('abort', () => { clearTimeout(t); resolve(null) }, { once: true })
-        })
-      : Promise.resolve(null)
-
-    const [groqOut, geminiOut] = await Promise.all([groqPromise, geminiPromise])
-    callerSignal.removeEventListener('abort', onCallerAbort)
-
-    const winner = winnerName === 'groq' ? groqOut : winnerName === 'gemini' ? geminiOut : null
-
-    if (winner) {
-      console.log(`[ai] ✓ streaming ${winnerName} (${mode}) — ${Date.now() - t0}ms`)
-      return winner
-    }
-
-    // Both failed
-    const errs = ([groqResult, geminiResult] as Array<GeneratedArticle | Error | null>)
-      .filter((r): r is Error => r instanceof Error)
-      .map(e => e.message)
-      .join(' | ')
-    console.error(`[ai] ✗ groq+gemini streaming both failed (${Date.now() - t0}ms): ${errs}`)
+  // ── Stage 1: Vertex + Groq hedged race ────────────────────────
+  const hedgeResult = await runHedged(vertex, groq, topic, grounding, callbacks, callerSignal)
+  if (hedgeResult) {
+    console.log(`[ai] ✓ streaming ${hedgeResult.winner} (${mode}) — ${Date.now() - t0}ms`)
+    return hedgeResult.article
   }
 
-  // ── Stage 2: DeepSeek non-streaming last resort ───────────────
-  if (deepseek) {
-    const t0 = Date.now()
+  // ── Stage 2: Gemini sequential fallback ───────────────────────
+  if (gemini && !callerSignal.aborted) {
+    let committed = false
+    const wrapped: StreamCallbacks = {
+      onMeta: (m) => { committed = true; callbacks.onMeta(m) },
+      onChunk: callbacks.onChunk,
+    }
+    try {
+      const article = await streamProvider(gemini, topic, grounding, wrapped, callerSignal)
+      if (committed) {
+        console.log(`[ai] ✓ streaming gemini (${mode}) — ${Date.now() - t0}ms`)
+        return article
+      }
+      console.warn('[ai] ✗ gemini: no content committed')
+    } catch (e) {
+      if (committed) throw e
+      console.warn(`[ai] ✗ gemini: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
+  // ── Stage 3: DeepSeek non-streaming last resort ───────────────
+  if (deepseek && !callerSignal.aborted) {
+    const td = Date.now()
     console.log(`[ai] → falling back to deepseek non-streaming (${mode})`)
     try {
       const article = await callProvider(deepseek, topic, grounding)
-      // Emit meta + content in one shot (no actual streaming, but consistent interface)
       const { content, ...meta } = article
       callbacks.onMeta(meta)
       callbacks.onChunk(content)
-      console.log(`[ai] ✓ deepseek fallback (${mode}) — ${Date.now() - t0}ms`)
+      console.log(`[ai] ✓ deepseek fallback (${mode}) — ${Date.now() - td}ms`)
       return article
     } catch (err) {
-      console.error(`[ai] ✗ deepseek failed (${Date.now() - t0}ms): ${err}`)
+      console.error(`[ai] ✗ deepseek failed: ${err}`)
     }
   }
 
@@ -537,15 +633,17 @@ async function callProvider(
   topic: string,
   wikiContent?: string,
 ): Promise<GeneratedArticle> {
-  const apiKey = process.env[config.apiKeyEnv]
+  const apiKey = config.getToken ? await config.getToken() : process.env[config.apiKeyEnv]
   if (!apiKey) throw new Error(`${config.name}: ${config.apiKeyEnv} not configured`)
+
+  const endpoint = typeof config.endpoint === 'function' ? config.endpoint() : config.endpoint
 
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), config.timeoutMs)
 
   let response: Response
   try {
-    response = await fetch(config.endpoint, {
+    response = await fetch(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

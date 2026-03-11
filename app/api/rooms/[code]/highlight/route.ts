@@ -5,6 +5,7 @@ import { broadcast, ch } from '@/lib/soketi/server'
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { getVertexToken, getVertexEndpoint, isVertexConfigured, VERTEX_MODEL } from '@/lib/vertexai'
 
 interface Props { params: Promise<{ code: string }> }
 
@@ -83,38 +84,43 @@ export async function POST(req: Request, { params }: Props) {
       return NextResponse.json({ error: "Host's daily explain limit reached." }, { status: 429 })
     }
 
-    const apiKey = process.env.GROQ_API_KEY
-    if (apiKey) {
-      const clipped = selectedText.trim().slice(0, 600)
-      const maxTokens = getMaxTokens(clipped.length)
-      const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    const clipped   = selectedText.trim().slice(0, 600)
+    const maxTokens = getMaxTokens(clipped.length)
+    const messages  = [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user',   content: `Explain this: "${clipped}"` },
+    ]
+    // Try providers in order: Vertex → Groq → Gemini
+    interface HProvider { endpoint: string; token: string; model: string }
+    const hlProviders: HProvider[] = []
+    if (isVertexConfigured()) {
+      try { hlProviders.push({ endpoint: getVertexEndpoint(), token: await getVertexToken(), model: VERTEX_MODEL }) } catch { /* skip */ }
+    }
+    if (process.env.GROQ_API_KEY)   hlProviders.push({ endpoint: 'https://api.groq.com/openai/v1/chat/completions', token: process.env.GROQ_API_KEY, model: 'llama-3.1-8b-instant' })
+    if (process.env.GEMINI_API_KEY) hlProviders.push({ endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', token: process.env.GEMINI_API_KEY, model: 'gemini-2.0-flash-lite' })
+
+    for (const p of hlProviders) {
+      const res = await fetch(p.endpoint, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'llama-3.1-8b-instant',
-          messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
-            { role: 'user', content: `Explain this: "${clipped}"` },
-          ],
-          temperature: 0.6,
-          max_tokens: maxTokens,
-          stream: false,
-        }),
+        headers: { 'Authorization': `Bearer ${p.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: p.model, messages, temperature: 0.6, max_tokens: maxTokens, stream: false }),
       }).catch(() => null)
-
-      if (groqRes?.ok) {
-        const groqData = await groqRes.json().catch(() => null)
-        explanation = groqData?.choices?.[0]?.message?.content ?? null
-
-        // Deduct from host's usage
-        const now = new Date().toISOString()
-        await admin.from('user_usage').update({
-          explain_count:        count + 1,
-          explain_period_start: today,
-          last_explain_at:      now,
-          updated_at:           now,
-        }).eq('id', room.host_id)
+      if (res?.ok) {
+        const data = await res.json().catch(() => null)
+        explanation = data?.choices?.[0]?.message?.content ?? null
+        if (explanation) break
       }
+    }
+
+    if (explanation) {
+      // Deduct from host's usage
+      const now = new Date().toISOString()
+      await admin.from('user_usage').update({
+        explain_count:        count + 1,
+        explain_period_start: today,
+        last_explain_at:      now,
+        updated_at:           now,
+      }).eq('id', room.host_id)
     }
   }
 
