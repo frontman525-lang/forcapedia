@@ -251,6 +251,8 @@ html {
   /* Prevent iOS/Android rubber-band overscroll from visually moving fixed backgrounds */
   overscroll-behavior: none;
   height: 100%;
+  /* Lock the overscroll area to dark — prevents white flash when bouncing past top/bottom */
+  background: #191919;
 }
 
 body {

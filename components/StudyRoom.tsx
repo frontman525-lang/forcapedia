@@ -67,6 +67,133 @@ interface StudyRoomProps {
 
 const REACTIONS = ['🔥', '💯', '🤔', '❓']
 
+// ── Rotating topic topics (same list as VerifiedCarousel) ─────────────────────
+const EMPTY_TOPICS = [
+  { title: 'Quantum Computing', category: 'Technology' },
+  { title: 'Ancient Rome', category: 'History' },
+  { title: 'Space Exploration', category: 'Science' },
+  { title: 'Neuroscience', category: 'Science' },
+  { title: 'Artificial Intelligence', category: 'Technology' },
+  { title: 'Philosophy of Mind', category: 'Philosophy' },
+  { title: 'Climate Science', category: 'Environment' },
+  { title: 'Black Holes', category: 'Astronomy' },
+  { title: 'Nuclear Fusion', category: 'Energy' },
+  { title: 'CRISPR Gene Editing', category: 'Biology' },
+  { title: 'Game Theory', category: 'Mathematics' },
+  { title: 'Dark Matter', category: 'Physics' },
+]
+
+function MobileEmptyState({ onSearch }: { onSearch: () => void }) {
+  // Start with static order (SSR-safe), shuffle on client after hydration
+  const [topics, setTopics] = React.useState(EMPTY_TOPICS)
+  const [active, setActive] = React.useState(0)
+  const [prev, setPrev] = React.useState<number | null>(null)
+  const [animating, setAnimating] = React.useState(false)
+  const [hovering, setHovering] = React.useState(false)
+  const ANIM_MS = 380
+
+  // Shuffle only on client (after mount) to avoid hydration mismatch
+  React.useEffect(() => {
+    const a = [...EMPTY_TOPICS]
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [a[i], a[j]] = [a[j], a[i]]
+    }
+    setTopics(a)
+  }, [])
+
+  const advance = React.useCallback(() => {
+    if (animating) return
+    const next = (active + 1) % topics.length
+    setPrev(active); setActive(next); setAnimating(true)
+    setTimeout(() => { setPrev(null); setAnimating(false) }, ANIM_MS)
+  }, [animating, active, topics.length])
+
+  React.useEffect(() => {
+    if (hovering) return
+    const id = setInterval(advance, 3500)
+    return () => clearInterval(id)
+  }, [hovering, advance])
+
+  const rowStyle: React.CSSProperties = {
+    position: 'absolute', inset: 0,
+    display: 'flex', alignItems: 'center',
+    gap: '0.75rem', padding: '0 1rem',
+  }
+
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      justifyContent: 'center', minHeight: '60vh', gap: '1.25rem',
+      paddingTop: '3rem',
+    }}>
+      <p style={{
+        fontFamily: 'Georgia, serif', fontSize: '14px', fontWeight: 300,
+        color: 'rgba(201,169,110,0.55)', margin: 0, letterSpacing: '0.02em',
+      }}>
+        Ready to explore?
+      </p>
+
+      {/* Card stack */}
+      <div style={{ position: 'relative', width: 'min(340px, calc(100vw - 3rem))', paddingBottom: '10px', overflow: 'visible' }}>
+        {/* Ghost depth cards */}
+        <div style={{ position: 'absolute', top: '10px', left: '6%', right: '6%', height: '58px', borderRadius: '14px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', opacity: 0.45, zIndex: 0 }} />
+        <div style={{ position: 'absolute', top: '5px', left: '3%', right: '3%', height: '58px', borderRadius: '14px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.09)', opacity: 0.65, zIndex: 1 }} />
+
+        {/* Main card */}
+        <div
+          onMouseEnter={() => setHovering(true)}
+          onMouseLeave={() => setHovering(false)}
+          onClick={() => onSearch()}
+          style={{
+            position: 'relative', zIndex: 2, height: '58px', borderRadius: '14px',
+            background: 'rgba(255,255,255,0.05)',
+            backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)',
+            border: `1px solid ${hovering ? 'rgba(201,169,110,0.35)' : 'rgba(255,255,255,0.10)'}`,
+            boxShadow: hovering
+              ? '0 8px 32px rgba(0,0,0,0.4), 0 0 20px rgba(201,169,110,0.05)'
+              : '0 4px 20px rgba(0,0,0,0.3)',
+            cursor: 'pointer', overflow: 'hidden',
+            transform: hovering ? 'translateY(-2px)' : 'translateY(0)',
+            transition: 'transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease',
+          }}
+        >
+          <style>{`
+            @keyframes emptyExitUp { from { opacity:1; transform:translateY(0); } to { opacity:0; transform:translateY(-18px); } }
+            @keyframes emptyEnterBelow { from { opacity:0; transform:translateY(18px); } to { opacity:1; transform:translateY(0); } }
+            @keyframes fadeInUp { from { opacity:0; transform:translateX(-50%) translateY(6px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
+          `}</style>
+          {prev !== null && (
+            <div style={{ ...rowStyle, animation: `emptyExitUp ${ANIM_MS}ms ease forwards` }}>
+              <EmptyTopicRow topic={topics[prev]} hovering={false} />
+            </div>
+          )}
+          <div style={{ ...rowStyle, animation: animating ? `emptyEnterBelow ${ANIM_MS}ms ease forwards` : 'none' }}>
+            <EmptyTopicRow topic={topics[active]} hovering={hovering} />
+          </div>
+        </div>
+      </div>
+
+    </div>
+  )
+}
+
+function EmptyTopicRow({ topic, hovering }: { topic: { title: string; category: string }; hovering: boolean }) {
+  return (
+    <>
+      <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#C9A96E', flexShrink: 0, opacity: hovering ? 1 : 0.5, transition: 'opacity 0.2s' }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <span style={{ fontFamily: 'monospace', fontSize: '9px', letterSpacing: '0.1em', textTransform: 'uppercase', color: 'rgba(240,237,232,0.35)', display: 'block', marginBottom: '3px' }}>
+          {topic.category}
+        </span>
+        <p style={{ fontSize: '13px', fontWeight: 500, color: '#F0EDE8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0, lineHeight: 1.4 }}>
+          {topic.title}
+        </p>
+      </div>
+    </>
+  )
+}
+
 function containsBlocked(t: string) {
   return /https?:\/\/\S+|www\.\S+|\b\S+\.(com|net|org|io|co|in|uk)\b/gi.test(t) ||
          /\b\d{10,}\b|\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b|\+\d[\s\d\-]{9,}/g.test(t)
@@ -402,6 +529,7 @@ export default function StudyRoom({
   const chatSidebarRef     = useRef<HTMLElement>(null)       // chat sidebar — exclude from selection check
   const chatInputRef       = useRef<HTMLInputElement>(null)    // desktop chat input for focus
   const chatBottomRef      = useRef<HTMLDivElement>(null)
+  const mobileMsgsRef      = useRef<HTMLDivElement>(null)  // mobile chat messages container
   const msgTsRef           = useRef<number[]>([]) // retained (harmless)
   const articleCacheRef    = useRef<Map<string, Article>>(new Map())
   const navDebounceRef     = useRef(0)
@@ -416,7 +544,7 @@ export default function StudyRoom({
   const [navHistory,      setNavHistory]      = useState<NavEntry[]>(initialNavHistory)
   const [article,         setArticle]         = useState<Article>(initialArticle)
   const [reactions,       setReactions]       = useState<FloatingReaction[]>([])
-  const [chatOpen,        setChatOpen]        = useState(true)
+  const [chatOpen,        setChatOpen]        = useState(false)
   const [chatExpanded,    setChatExpanded]    = useState(false)
   const [chatInput,       setChatInput]       = useState('')
   const [cooldownUntil,   setCooldownUntil]   = useState(0)
@@ -475,6 +603,7 @@ export default function StudyRoom({
   const [closingRoom,        setClosingRoom]        = useState(false)
   const [navBlocked,         setNavBlocked]         = useState(false)
   const [codeCopied,         setCodeCopied]         = useState(false)
+  const [emojiPickerOpen,    setEmojiPickerOpen]    = useState(false)
   // Persist session start time across page refreshes via localStorage
   const startTimeRef = useRef<number>((() => {
     try {
@@ -489,6 +618,20 @@ export default function StudyRoom({
 
   /** Returns the current Pusher socket ID (to exclude self from broadcasts). */
   const socketId = () => pusherRef.current?.connection.socket_id
+
+  /** Scroll chat to bottom — works for both desktop sidebar and mobile sheet */
+  function scrollChatToBottom() {
+    // Mobile: scroll the messages container div directly (position:fixed parent breaks scrollIntoView)
+    if (mobileMsgsRef.current) {
+      mobileMsgsRef.current.scrollTop = mobileMsgsRef.current.scrollHeight
+      return
+    }
+    // Desktop sidebar: scrollIntoView works normally
+    scrollChatToBottom()
+  }
+
+  // Prefetch chat page so navigation is instant
+  useEffect(() => { router.prefetch(`/room/${roomCode}/chat`) }, [roomCode, router])
 
   // Keep DND ref in sync so Soketi closure always reads the latest value
   useEffect(() => { doNotDisturbRef.current = doNotDisturb }, [doNotDisturb])
@@ -508,6 +651,13 @@ export default function StudyRoom({
     window.addEventListener('resize', check)
     return () => window.removeEventListener('resize', check)
   }, [])
+
+  // ── Scroll to top when chat opens on mobile so empty-state card stays visible
+  useEffect(() => {
+    if (chatOpen && isMobile && !article.content) {
+      setTimeout(() => window.scrollTo({ top: 0, behavior: 'smooth' }), 60)
+    }
+  }, [chatOpen, isMobile, article.content])
 
   // ── Related articles — re-fetch whenever article changes ──────────────────
   useEffect(() => {
@@ -625,7 +775,7 @@ export default function StudyRoom({
     // ── Chat channel ─────────────────────────────────────────────────────────
     chatCh.bind('message', (payload: ChatMessage) => {
       setMessages(prev => [...prev, payload])
-      setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+      setTimeout(() => scrollChatToBottom(), 50)
       if (!doNotDisturbRef.current) playSound('receive')
     })
     chatCh.bind('reaction', (payload: { emoji: string; x: number; y: number; displayName: string }) => {
@@ -653,7 +803,7 @@ export default function StudyRoom({
     doubtsCh.bind('message', (payload: ChatMessage) => {
       setMessages(prev => [...prev, payload])
       setUnreadDoubts(prev => prev + 1)
-      setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+      setTimeout(() => scrollChatToBottom(), 50)
       if (!doNotDisturbRef.current) playSound('chime')
     })
     doubtsCh.bind('explain_shared', (payload: { selectedText: string; explanation: string; triggeredBy: string; color: string; userId: string }) => {
@@ -767,7 +917,7 @@ export default function StudyRoom({
 
   // ── Scroll chat to bottom on new messages ─────────────────────────────────
   useEffect(() => {
-    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    scrollChatToBottom()
   }, [messages.length])
 
   // ── Helpers ───────────────────────────────────────────────────────────────
@@ -838,7 +988,7 @@ export default function StudyRoom({
     }
     setMessages(prev => [...prev, optimisticMsg])
     if (!doNotDisturb) playSound('send')
-    setTimeout(() => chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50)
+    setTimeout(() => scrollChatToBottom(), 50)
 
     const res = await fetch(`/api/rooms/${roomCode}/message`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1550,56 +1700,83 @@ export default function StudyRoom({
           </>}
         </div>
 
-        {/* Mobile copy button — icon-only pill */}
+        {/* Mobile share button — native share sheet with clipboard fallback */}
         {isMobile && (
           <button
-            onClick={() => {
-              navigator.clipboard.writeText(`${window.location.origin}/room/${roomCode}`)
+            onClick={async () => {
+              const url = `${window.location.origin}/room/${roomCode}`
+              const title = article?.title ?? room.room_name ?? 'Study Room'
+              if (navigator.share) {
+                try {
+                  await navigator.share({ title, url })
+                  return
+                } catch {
+                  // user cancelled — fall through to clipboard
+                }
+              }
+              await navigator.clipboard.writeText(url).catch(() => null)
               setCodeCopied(true)
               setTimeout(() => setCodeCopied(false), 1500)
             }}
             style={{
               display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-              width: 26, height: 26, borderRadius: '50%', flexShrink: 0,
+              width: 30, height: 30, borderRadius: '50%', flexShrink: 0,
               background: codeCopied ? 'rgba(201,169,110,0.15)' : 'transparent',
               border: `1px solid ${codeCopied ? 'rgba(201,169,110,0.35)' : 'rgba(255,255,255,0.1)'}`,
-              color: codeCopied ? '#C9A96E' : 'rgba(240,237,232,0.4)',
-              cursor: 'pointer', transition: 'all 0.15s', padding: 0,
+              color: codeCopied ? '#C9A96E' : 'rgba(240,237,232,0.45)',
+              cursor: 'pointer', transition: 'all 0.2s ease', padding: 0,
             }}
-            title="Copy room link"
+            title="Share room"
           >
             {codeCopied ? (
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="20 6 9 17 4 12"/>
               </svg>
             ) : (
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
               </svg>
             )}
           </button>
         )}
 
-        {/* Search bar — full text on desktop, icon-only on mobile */}
+        {/* Search bar — full text on desktop, icon-only circle on mobile */}
         {currentUser.isHost && (
-          <button
-            onClick={() => { setSearchOpen(true); setSearchQ(''); setSearchResults([]); setGenerateError('') }}
-            style={{
-              flex: isMobile ? 0 : 1,
-              maxWidth: isMobile ? 32 : 280,
-              height: 28,
-              background: 'rgba(255,255,255,0.05)',
-              border: '1px solid rgba(255,255,255,0.08)', borderRadius: '6px',
-              color: 'rgba(240,237,232,0.35)', fontSize: '12px', cursor: 'text',
-              textAlign: isMobile ? 'center' : 'left',
-              padding: isMobile ? '0' : '0 0.6rem',
-              fontFamily: 'var(--font-mono, monospace)',
-              display: 'flex', alignItems: 'center', justifyContent: isMobile ? 'center' : 'flex-start',
-              gap: '0.3rem', flexShrink: 0,
-            }}>
-            {isMobile ? '🔍' : <><span>🔍</span><span>Search articles…</span></>}
-          </button>
+          isMobile ? (
+            <button
+              onClick={() => { setSearchOpen(true); setSearchQ(''); setSearchResults([]); setGenerateError('') }}
+              style={{
+                width: 32, height: 32, flexShrink: 0,
+                background: 'rgba(255,255,255,0.05)',
+                border: '1px solid rgba(255,255,255,0.10)', borderRadius: '50%',
+                color: 'rgba(240,237,232,0.5)', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                transition: 'border-color 0.15s, background 0.15s',
+              }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+            </button>
+          ) : (
+            <button
+              onClick={() => { setSearchOpen(true); setSearchQ(''); setSearchResults([]); setGenerateError('') }}
+              style={{
+                flexGrow: 1, flexShrink: 0, flexBasis: 0, maxWidth: 280, height: 28,
+                background: 'rgba(255,255,255,0.05)',
+                border: '1px solid rgba(255,255,255,0.10)', borderRadius: '6px',
+                color: 'rgba(240,237,232,0.4)', fontSize: '12px', cursor: 'text',
+                textAlign: 'left', padding: '0 0.65rem',
+                fontFamily: 'var(--font-sans, system-ui)',
+                display: 'flex', alignItems: 'center', gap: '0.4rem',
+                transition: 'border-color 0.15s, background 0.15s',
+              }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.6 }}>
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+              <span>Search any topic…</span>
+            </button>
+          )
         )}
 
         {/* Spacer */}
@@ -1873,7 +2050,7 @@ export default function StudyRoom({
             paddingLeft: isMobile ? '1rem' : '1.5rem',
             paddingRight: chatOpen && !isMobile ? '336px' : isMobile ? '1rem' : '1.5rem',
             paddingBottom: isMobile ? (chatOpen ? '360px' : '80px') : '3rem',
-            transition: 'padding-right 0.28s cubic-bezier(0.4,0,0.2,1)',
+            transition: 'padding-right 0.28s cubic-bezier(0.4,0,0.2,1), padding-bottom 0.32s cubic-bezier(0.32,0.72,0,1)',
           }}
         >
           <div style={{ maxWidth: 720, margin: '0 auto', opacity: articleFading ? 0 : 1, transition: 'opacity 0.15s ease' }}>
@@ -1892,6 +2069,16 @@ export default function StudyRoom({
                   Retry
                 </button>
               </div>
+            )}
+
+            {/* ── EMPTY STATE — rotating topic card when no article content ── */}
+            {!articleLoading && !generating && !article.content && !searchOpen && (
+              <MobileEmptyState onSearch={() => {
+                setSearchOpen(true)
+                setSearchQ('')
+                setSearchResults([])
+                setGenerateError('')
+              }} />
             )}
 
             {articleLoading ? (
@@ -1982,14 +2169,9 @@ export default function StudyRoom({
                   </p>
                 ) : null}
 
-                {/* Wikipedia info box — inline float ensures 280px like article page, immune to CSS cascade */}
+                {/* Wikipedia info box — CSS class handles layout (mobile: full-width, desktop: float right) */}
                 {!generating && (
-                  <div style={{
-                    float: 'right', width: 280, margin: '0 0 1.5rem 2rem',
-                    clear: 'right', flexShrink: 0,
-                  }}>
-                    <WikiInfoBox key={article.slug} wikiUrl={article.wiki_url} articleTitle={article.title} />
-                  </div>
+                  <WikiInfoBox key={article.slug} wikiUrl={article.wiki_url} articleTitle={article.title} />
                 )}
 
                 {/* Article body — streams in live, no remount when done */}
@@ -2241,7 +2423,7 @@ export default function StudyRoom({
             </div>
 
             {/* Messages */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '0.5rem 0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <div ref={mobileMsgsRef} style={{ flex: 1, overflowY: 'auto', padding: '0.5rem 0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
               {messages
                 .filter(msg => activeTab === 'doubts' ? msg.kind === 'doubt' : msg.kind !== 'doubt')
                 .map(msg => <ChatBubble key={msg.id} msg={msg} currentUserId={currentUser.id} isHost={currentUser.isHost} roomCode={roomCode} onPin={pinMessage} onDelete={deleteMessage} />)}
@@ -2338,22 +2520,33 @@ export default function StudyRoom({
                   </button>
                 ))}
               </div>
-              {/* Controls */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <button onClick={() => setChatExpanded(e => !e)} title={chatExpanded ? 'Collapse' : 'Expand'} style={{ background: 'none', border: 'none', color: 'rgba(240,237,232,0.4)', cursor: 'pointer', padding: '4px', display: 'flex' }}>
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-                    {chatExpanded
-                      ? <><line x1="3" y1="10" x2="8" y2="14"/><line x1="13" y1="10" x2="8" y2="14"/><line x1="3" y1="6" x2="8" y2="2"/><line x1="13" y1="6" x2="8" y2="2"/></>
-                      : <><line x1="3" y1="6" x2="8" y2="2"/><line x1="13" y1="6" x2="8" y2="2"/><line x1="3" y1="10" x2="8" y2="14"/><line x1="13" y1="10" x2="8" y2="14"/></>
-                    }
+              {/* Controls — 3 buttons: scroll to bottom, full-page, close */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+                <button
+                  onClick={() => scrollChatToBottom()}
+                  title="Scroll to bottom"
+                  style={{ background: 'none', border: 'none', color: 'rgba(240,237,232,0.4)', cursor: 'pointer', padding: '6px', display: 'flex', transition: 'color 0.2s ease' }}
+                  onMouseEnter={e => { e.currentTarget.style.color = 'rgba(240,237,232,0.8)' }}
+                  onMouseLeave={e => { e.currentTarget.style.color = 'rgba(240,237,232,0.4)' }}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>
                   </svg>
                 </button>
-                <Link href={`/room/${roomCode}/chat`} title="Full screen chat" style={{ color: 'rgba(240,237,232,0.4)', display: 'flex', padding: '4px' }}>
+                <Link href={`/room/${roomCode}/chat`} title="Open full chat page" style={{ color: 'rgba(240,237,232,0.4)', display: 'flex', padding: '6px', transition: 'color 0.2s ease' }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'rgba(240,237,232,0.8)' }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'rgba(240,237,232,0.4)' }}>
                   <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M10 2h4v4M14 2L9 7M6 14H2v-4M2 14l5-5"/>
                   </svg>
                 </Link>
-                <button onClick={() => { setChatOpen(false); setChatExpanded(false) }} style={{ background: 'none', border: 'none', color: 'rgba(240,237,232,0.3)', cursor: 'pointer', padding: '4px', display: 'flex' }}>
+                <button
+                  onClick={() => { setChatOpen(false); setChatExpanded(false) }}
+                  title="Close chat"
+                  style={{ background: 'none', border: 'none', color: 'rgba(240,237,232,0.3)', cursor: 'pointer', padding: '6px', display: 'flex', transition: 'color 0.2s ease' }}
+                  onMouseEnter={e => { e.currentTarget.style.color = 'rgba(240,237,232,0.7)' }}
+                  onMouseLeave={e => { e.currentTarget.style.color = 'rgba(240,237,232,0.3)' }}
+                >
                   <IconClose size={12} />
                 </button>
               </div>
@@ -2444,7 +2637,7 @@ export default function StudyRoom({
           }}>
             {/* Chat / Doubts toggle */}
             <button
-              onClick={() => { setChatOpen(o => !o); if (!chatOpen) setChatExpanded(false) }}
+              onClick={() => { setChatOpen(o => !o); if (!chatOpen) setChatExpanded(false); setEmojiPickerOpen(false) }}
               style={{
                 flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem',
                 background: chatOpen ? 'rgba(201,169,110,0.12)' : 'rgba(255,255,255,0.05)',
@@ -2464,20 +2657,55 @@ export default function StudyRoom({
               )}
             </button>
 
-            {/* Reactions */}
+            {/* Emoji picker button */}
             {!currentUser.isObserver && (
-              <div style={{ display: 'flex', gap: '2px' }}>
-                {REACTIONS.map(e => (
-                  <button key={e} onClick={() => sendReaction(e)} style={{
-                    background: 'none', border: 'none', cursor: 'pointer',
-                    fontSize: '17px', padding: '2px 5px',
-                    transition: 'transform 0.1s',
-                  }}
-                  onMouseEnter={ev => { ev.currentTarget.style.transform = 'scale(1.3)' }}
-                  onMouseLeave={ev => { ev.currentTarget.style.transform = 'scale(1)' }}>
-                    {e}
-                  </button>
-                ))}
+              <div style={{ position: 'relative' }}>
+                <button
+                  onClick={() => setEmojiPickerOpen(o => !o)}
+                  style={{
+                    background: emojiPickerOpen ? 'rgba(201,169,110,0.12)' : 'rgba(255,255,255,0.05)',
+                    border: `1px solid ${emojiPickerOpen ? 'rgba(201,169,110,0.25)' : 'rgba(255,255,255,0.08)'}`,
+                    borderRadius: '8px', cursor: 'pointer',
+                    padding: '0.35rem 0.5rem',
+                    transition: 'all 0.2s ease',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={emojiPickerOpen ? 'var(--gold)' : 'rgba(240,237,232,0.5)'} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <path d="M8 13s1.5 2 4 2 4-2 4-2"/>
+                    <line x1="9" y1="9" x2="9.01" y2="9"/>
+                    <line x1="15" y1="9" x2="15.01" y2="9"/>
+                  </svg>
+                </button>
+                {/* Glassmorphism emoji popup — anchored right to avoid left-side clip on mobile */}
+                {emojiPickerOpen && (
+                  <div style={{
+                    position: 'absolute', bottom: 'calc(100% + 8px)', right: 0,
+                    background: 'rgba(22,20,18,0.95)',
+                    backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
+                    border: '1px solid rgba(255,255,255,0.12)',
+                    borderRadius: '14px', padding: '8px 10px',
+                    display: 'flex', gap: '4px',
+                    boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+                    zIndex: 500,
+                    animation: 'fadeInUp 0.18s ease',
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {['🔥', '💯', '🤔', '❓', '😂', '👍'].map(e => (
+                      <button key={e}
+                        onClick={() => { sendReaction(e); setEmojiPickerOpen(false) }}
+                        style={{
+                          background: 'none', border: 'none', cursor: 'pointer',
+                          fontSize: '22px', padding: '4px 6px', borderRadius: '8px',
+                          transition: 'transform 0.15s ease, background 0.15s ease',
+                        }}
+                        onMouseEnter={ev => { ev.currentTarget.style.transform = 'scale(1.3)'; ev.currentTarget.style.background = 'rgba(255,255,255,0.08)' }}
+                        onMouseLeave={ev => { ev.currentTarget.style.transform = 'scale(1)'; ev.currentTarget.style.background = 'none' }}>
+                        {e}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -2687,7 +2915,7 @@ export default function StudyRoom({
       {/* ── HOST SEARCH MODAL ────────────────────────────────────────────── */}
       {searchOpen && currentUser.isHost && (
         <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 400,
+          position: 'fixed', inset: 0, background: 'rgba(10,8,6,0.97)', zIndex: 400,
           display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: '8vh',
         }} onClick={e => { if (e.target === e.currentTarget && !generating) { setSearchOpen(false); setSearchQ(''); setWikiSuggestions([]) } }}>
           <div style={{ width: 'min(580px, 92vw)', display: 'flex', flexDirection: 'column', gap: '6px' }}>

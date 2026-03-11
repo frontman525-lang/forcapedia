@@ -224,7 +224,7 @@ export function AvatarWithBadge({
   size?: number
   badge?: string | null
 }) {
-  const badgeSize = Math.round(size * 0.52)
+  const badgeSize = Math.round(size * 0.70)
 
   return (
     <div style={{ position: 'relative', width: size, height: size, flexShrink: 0 }}>

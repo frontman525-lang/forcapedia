@@ -66,6 +66,8 @@ export default function WikiInfoBox({ wikiUrl, articleTitle }: WikiInfoBoxProps)
       if (match) wikiTitle = decodeURIComponent(match[1].replace(/_/g, ' '))
     }
 
+    if (!wikiTitle.trim()) return
+
     fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(wikiTitle)}`, {
       headers: { Accept: 'application/json' },
     })
