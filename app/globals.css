@@ -210,6 +210,35 @@ html.light .hb-mars-container {
   display: none !important;
 }
 
+/* ─── MOBILE VIEWPORT TOKENS ─────────────────────────────────────────────────
+   ARCHITECTURE RULE — read this before editing ANY component:
+   ✦ NEVER hardcode 100vh. Mobile browser chrome (address bar, keyboard) constantly
+     changes the viewport height, causing 100vh to jump and layouts to reflow.
+   ✦ Use CSS variables instead:
+       min-height: var(--app-h)   → full-screen shells (uses 100dvh when supported)
+       height: var(--app-sh)      → bottom sheets/drawers (uses 100svh, stable against keyboard)
+   ✦ In React inline styles, reference these as: { minHeight: 'var(--app-h)' }
+   ✦ 100dvh = dynamic viewport height — updates as chrome shows/hides (no jump on load)
+   ✦ 100svh = small viewport height — always the SMALLEST size, never changes with keyboard
+   ✦ Supported: Chrome 108+, Safari 15.4+, Firefox 101+ (all modern iOS/Android)
+
+   BACKGROUND STABILITY RULE:
+   ✦ Fixed backgrounds must use transform: translateZ(0) to promote to GPU compositor layer
+   ✦ Canvas resize handler: only resize when width changes OR new height > current height
+     (prevents keyboard-open from shrinking and rebuilding the canvas)
+
+   SAFE AREA RULE (iPhone notch / Android nav):
+   ✦ Bottom-fixed elements: padding-bottom: env(safe-area-inset-bottom, 0px)
+   ✦ Import via CSS: padding: 0 0 env(safe-area-inset-bottom, 0px)
+   ─────────────────────────────────────────────────────────────────────────── */
+:root {
+  --app-h:        100vh;  /* full-height shell */
+  --app-sh:       100vh;  /* stable height for sheets/drawers */
+  --bottom-bar-h: 54px;   /* mobile action bar height */
+}
+@supports (height: 100dvh) { :root { --app-h:  100dvh; } }
+@supports (height: 100svh) { :root { --app-sh: 100svh; } }
+
 /* ─── BASE ───────────────────────────────────────── */
 *, *::before, *::after {
   box-sizing: border-box;
@@ -221,7 +250,6 @@ html {
   scroll-behavior: smooth;
   /* Prevent iOS/Android rubber-band overscroll from visually moving fixed backgrounds */
   overscroll-behavior: none;
-  /* Stable viewport height — tells the browser the UI chrome won't resize content */
   height: 100%;
 }
 
@@ -236,6 +264,9 @@ body {
   overscroll-behavior: none;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Prevent font inflation on Android */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 /* Noise texture */

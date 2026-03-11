@@ -52,8 +52,24 @@ export default async function RoomPage({ params }: Props) {
 
   if (!member && !needsPassword) {
     // No password: insert as pending directly
-    const { data: usage } = await supabase.from('user_usage').select('tier').eq('user_id', user.id).maybeSingle()
-    const tier = usage?.tier ?? 'free'
+    // Use subscriptions as authoritative source — user_usage.tier can be stale
+    // when Razorpay fires subscription.cancelled early on cancel_at_period_end.
+    const { data: activeSub } = await admin
+      .from('subscriptions')
+      .select('tier, status, cancel_at_period_end, current_period_end')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    const hasAccess = activeSub && (
+      activeSub.status === 'active' ||
+      activeSub.status === 'past_due' ||
+      (activeSub.status === 'cancelled' && activeSub.cancel_at_period_end && activeSub.current_period_end && new Date(activeSub.current_period_end) > new Date())
+    )
+    const { data: usageFallback } = !hasAccess
+      ? await admin.from('user_usage').select('tier').eq('user_id', user.id).maybeSingle()
+      : { data: null }
+    const tier = hasAccess ? (activeSub!.tier as string) : (usageFallback?.tier ?? 'free')
 
     const { count: activeCount } = await admin
       .from('room_members')

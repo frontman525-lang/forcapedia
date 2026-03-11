@@ -249,6 +249,11 @@ export default function ProfileDashboard({ user, usage }: Props) {
     setChangePlanLoading(true)
     setChangePlanError(null)
     setChangePlanMsg(null)
+    // Track whether a Razorpay popup was opened — if so, the popup's own
+    // callbacks (ondismiss / payment.failed / handler) manage loading state.
+    // We must NOT reset loading in finally, or the button re-enables while
+    // the popup is still open and the user can trigger a double-submit.
+    let popupOpened = false
     try {
       const res = await fetch('/api/payments/change-plan', {
         method:  'POST',
@@ -260,8 +265,13 @@ export default function ProfileDashboard({ user, usage }: Props) {
 
       if (data.type === 'downgrade_scheduled') {
         const name = changePlanTier === 'tier1' ? 'Scholar' : 'Researcher'
-        setChangePlanMsg(`Downgrade scheduled. Your current plan remains active until the period ends, then switches to ${name} ${changePlanCycle}.`)
+        setChangePlanMsg(`Downgrade scheduled. Your current plan stays active until the period ends, then switches to ${name} ${changePlanCycle}.`)
         setChangePlanOpen(false)
+        // Refresh subscription state so "CANCELS AT PERIOD END" badge appears
+        fetch('/api/payments/status').then(r => r.json()).then(d => {
+          if (d?.subscription) setSub(d.subscription)
+          if (d?.usage) setLiveUsage(d.usage)
+        }).catch(() => {})
         return
       }
 
@@ -288,6 +298,7 @@ export default function ProfileDashboard({ user, usage }: Props) {
           },
         })
         rzp.on('payment.failed', (r) => { setChangePlanError(r.error?.description ?? 'Payment failed.'); setChangePlanLoading(false) })
+        popupOpened = true
         rzp.open()
         return
       }
@@ -298,7 +309,7 @@ export default function ProfileDashboard({ user, usage }: Props) {
 
       setChangePlanError('Unexpected response. Please try again.')
     } catch { setChangePlanError('Network error. Please try again.') }
-    finally { setChangePlanLoading(false) }
+    finally { if (!popupOpened) setChangePlanLoading(false) }
   }
 
   async function handleCancel() {
@@ -877,6 +888,7 @@ export default function ProfileDashboard({ user, usage }: Props) {
                                 else if (t === 'tier1' && c === 'yearly') { setChangePlanTier('tier2'); setChangePlanCycle('monthly') }
                                 else { setChangePlanTier('tier1'); setChangePlanCycle('monthly') }
                                 setChangePlanError(null)
+                                setChangePlanMsg(null)
                                 setChangePlanOpen(o => !o)
                               }}
                               style={{

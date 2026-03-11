@@ -253,7 +253,10 @@ function SelectionToolbar({ chatSidebarRef, isHost, isObserver, explainLoading, 
       if (!rects.length) { setSel(null); return }
       const last = rects[rects.length - 1], first = rects[0]
       const TH = 40, M = 8
-      const below = window.innerHeight - last.bottom
+      // On mobile, the 54px bottom action bar eats into the available space.
+      // Reserve that space so the toolbar never appears behind the bar.
+      const reservedBottom = window.innerWidth < 768 ? 54 : 0
+      const below = window.innerHeight - last.bottom - reservedBottom
       const y = below < TH + M + 8 ? Math.max(M, first.top - TH - M) : last.bottom + M
       const x = Math.max(80, Math.min(window.innerWidth - 80, last.left + last.width / 2))
       setSel({ text, x, y })
@@ -1300,7 +1303,7 @@ export default function StudyRoom({
   // ── PASSWORD GATE ─────────────────────────────────────────────────────────
   if (needsPassword && !isPendingState) {
     return (
-      <div style={{ minHeight: '100vh', background: '#191919', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
+      <div style={{ minHeight: 'var(--app-h)', background: '#191919', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
         <div style={{ width: 'min(380px,100%)', background: 'rgba(30,28,26,0.98)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '16px', padding: '2rem' }}>
           <p style={{ fontFamily: 'Georgia,serif', fontSize: '1.5rem', fontWeight: 300, color: '#F0EDE8', marginBottom: '0.4rem' }}>Password required</p>
           <p style={{ fontSize: '13px', color: 'rgba(240,237,232,0.4)', marginBottom: '1.25rem' }}>This room is password-protected.</p>
@@ -1322,7 +1325,7 @@ export default function StudyRoom({
   // ── PENDING APPROVAL SCREEN ───────────────────────────────────────────────
   if (isPendingState) {
     return (
-      <div style={{ minHeight: '100vh', background: '#191919', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem', padding: '2rem' }}>
+      <div style={{ minHeight: 'var(--app-h)', background: '#191919', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem', padding: '2rem' }}>
         <div style={{ width: 8, height: 8, borderRadius: '50%', background: '#F7C97E', animation: 'pulse 1.5s ease-in-out infinite' }} />
         <p style={{ fontFamily: 'Georgia,serif', fontSize: '1.75rem', fontWeight: 300, color: '#F0EDE8' }}>Waiting for approval</p>
         <p style={{ fontSize: '14px', color: 'rgba(240,237,232,0.45)', textAlign: 'center', maxWidth: 320 }}>
@@ -1336,7 +1339,7 @@ export default function StudyRoom({
   // ── SESSION ENDED SCREEN ──────────────────────────────────────────────────
   if (sessionEnded) {
     return (
-      <div style={{ minHeight: '100vh', background: '#191919', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem', padding: '2rem' }}>
+      <div style={{ minHeight: 'var(--app-h)', background: '#191919', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem', padding: '2rem' }}>
         {sessionSummary ? (
           <div style={{ width: 'min(480px,100%)', background: 'rgba(30,28,26,0.98)', border: '1px solid rgba(201,169,110,0.2)', borderRadius: '20px', padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <p style={{ fontFamily: 'Georgia,serif', fontSize: '1.5rem', fontWeight: 300, color: '#F0EDE8', marginBottom: '0.25rem' }}>Session complete</p>
@@ -1412,7 +1415,7 @@ export default function StudyRoom({
 
   // ── RENDER ────────────────────────────────────────────────────────────────
   return (
-    <div style={{ minHeight: '100vh', background: '#191919' }}>
+    <div style={{ minHeight: 'var(--app-h)', background: '#191919' }}>
 
       {/* ── TIME WARNING BANNER ───────────────────────────────────────────── */}
       {timeWarning && !timeLimitHit && !sessionEnded && (
@@ -2304,7 +2307,7 @@ export default function StudyRoom({
         {isMobile && (
           <div style={{
             position: 'fixed', left: 0, right: 0, bottom: 54, zIndex: 90,
-            height: chatOpen ? (chatExpanded ? '78vh' : 280) : 0,
+            height: chatOpen ? (chatExpanded ? 'calc(var(--app-sh) - 54px - 52px)' : 280) : 0,
             transition: 'height 0.32s cubic-bezier(0.32, 0.72, 0, 1)',
             overflow: 'hidden',
             display: 'flex', flexDirection: 'column',

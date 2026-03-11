@@ -28,8 +28,16 @@ export default async function StudyPage() {
 
   const admin = createAdminClient()
 
-  const [usageRes, membershipsRes] = await Promise.all([
-    supabase.from('user_usage').select('tier, preferred_badge').eq('user_id', user.id).maybeSingle(),
+  const [usageRes, subRes, membershipsRes] = await Promise.all([
+    admin.from('user_usage').select('tier, preferred_badge').eq('user_id', user.id).maybeSingle(),
+    // Authoritative tier: most recent sub regardless of status
+    admin
+      .from('subscriptions')
+      .select('tier, status, cancel_at_period_end, current_period_end')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle(),
     admin
       .from('room_members')
       .select('joined_at, study_rooms(code, room_name, article_title, status, created_at)')
@@ -38,7 +46,15 @@ export default async function StudyPage() {
       .limit(20),
   ])
 
-  const userTier      = usageRes.data?.tier ?? 'free'
+  // Derive tier from subscription (handles cancel_at_period_end edge case where
+  // Razorpay fires subscription.cancelled immediately but access hasn't expired yet)
+  const s = subRes.data
+  const hasActiveSub = s && (
+    s.status === 'active' ||
+    s.status === 'past_due' ||
+    (s.status === 'cancelled' && s.cancel_at_period_end && s.current_period_end && new Date(s.current_period_end) > new Date())
+  )
+  const userTier      = hasActiveSub ? (s!.tier as string) : (usageRes.data?.tier ?? 'free')
   const userBadge     = (usageRes.data?.preferred_badge as string | null | undefined) ?? null
   const userAvatarUrl = (user.user_metadata?.avatar_url as string | null | undefined) ?? null
   const userName      = (user.user_metadata?.full_name as string | undefined)?.split(' ')[0] ?? 'Friend'

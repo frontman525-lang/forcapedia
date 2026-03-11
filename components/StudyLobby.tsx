@@ -200,10 +200,10 @@ function ActionTile({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        width: 168, height: 168,
+        width: 'clamp(130px, 42vw, 168px)', height: 'clamp(130px, 42vw, 168px)',
         display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center', gap: '1rem',
-        padding: '1.5rem 1rem',
+        alignItems: 'center', justifyContent: 'center', gap: '0.75rem',
+        padding: 'clamp(1rem, 3vw, 1.5rem)',
         background: hovered ? colors.hover : colors.bg,
         border: `1px solid ${colors.border}`,
         borderRadius: '22px',
@@ -527,7 +527,7 @@ export default function StudyLobby({
 
   return (
     <div style={{
-      minHeight: '100vh',
+      minHeight: 'var(--app-h)',
       background: '#161412',
       color: 'var(--text-primary)',
       fontFamily: 'var(--font-sans)',
@@ -613,7 +613,7 @@ export default function StudyLobby({
       {/* ── CONTENT ───────────────────────────────────────────────────────── */}
       <main style={{
         paddingTop: 52,
-        minHeight: '100vh',
+        minHeight: 'var(--app-h)',
         display: 'flex',
         flexDirection: 'column',
       }}>
@@ -625,7 +625,7 @@ export default function StudyLobby({
             display: 'flex', flexDirection: 'column',
             alignItems: 'center', justifyContent: 'center',
             padding: 'clamp(3rem,8vw,5rem) 1.5rem',
-            minHeight: 'calc(100vh - 52px)',
+            minHeight: 'calc(var(--app-h) - 52px)',
           }}>
 
             {/* TILES MODE */}
@@ -657,8 +657,8 @@ export default function StudyLobby({
 
                 {/* Action tiles */}
                 <div style={{
-                  display: 'flex', gap: 'clamp(1rem, 3vw, 1.75rem)',
-                  justifyContent: 'center', flexWrap: 'wrap',
+                  display: 'flex', gap: 'clamp(0.75rem, 3vw, 1.75rem)',
+                  justifyContent: 'center', flexWrap: 'nowrap',
                   marginBottom: '3rem',
                 }}>
                   {canCreate(userTier) ? (

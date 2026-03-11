@@ -252,8 +252,21 @@ export async function processWebhookEvent(
         })
         .eq('id', sub.id)
 
-      // Downgrade user to free
-      await admin.from('user_usage').update({ tier: 'free' }).eq('user_id', sub.user_id)
+      // Only downgrade to free if access has actually expired.
+      // cancel_at_period_end=true means Razorpay fires subscription.cancelled
+      // immediately even though access continues until current_period_end.
+      // In that case, keep tier active — the subscription.ended event (or a
+      // future subscription.cancelled after period_end) will trigger the real downgrade.
+      const accessExpired = !currentSub?.cancel_at_period_end
+        || !currentSub?.current_period_end
+        || new Date(currentSub.current_period_end) <= new Date()
+
+      if (accessExpired) {
+        await admin.from('user_usage').update({ tier: 'free' }).eq('user_id', sub.user_id)
+        console.log(`[processor] ✓ tier downgraded to free — user=${sub.user_id}`)
+      } else {
+        console.log(`[processor] cancel_at_period_end=true, access until ${currentSub.current_period_end} — tier preserved`)
+      }
 
       // Send cancellation confirmation email
       const { email, firstName } = await getUserInfo(admin, sub.user_id)

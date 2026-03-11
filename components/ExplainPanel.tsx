@@ -941,7 +941,7 @@ export default function ExplainPanel({ articleSlug, contentRef }: ExplainPanelPr
             ...(isMobile
               ? {
                   bottom: 0, left: 0, right: 0,
-                  height: '78vh',
+                  height: 'calc(var(--app-sh) * 0.78)',
                   borderRadius: '20px 20px 0 0',
                   borderTop: '1px solid var(--border)',
                   transform: panelVisible ? 'translateY(0)' : 'translateY(100%)',

@@ -9,10 +9,11 @@
 //   { type: 'chunk', html: string }
 //   { type: 'done',  slug: string }
 //   { type: 'error', message: string }
-import { createClient }      from '@/lib/supabase/server'
-import { createAdminClient } from '@/lib/supabase/admin'
-import { streamArticle }     from '@/lib/ai'
-import { getWikiArticle }    from '@/lib/wikipedia'
+import { createClient }        from '@/lib/supabase/server'
+import { createAdminClient }   from '@/lib/supabase/admin'
+import { streamArticle }       from '@/lib/ai'
+import { getWikiArticle }      from '@/lib/wikipedia'
+import { pingGoogleIndexing }  from '@/lib/google-indexing'
 import type { StreamCallbacks } from '@/lib/ai'
 
 // ── Per-user in-flight lock + cooldown ──────────────────────────────────────
@@ -198,6 +199,11 @@ export async function POST(req: Request) {
           urlList: [`${process.env.NEXT_PUBLIC_SITE_URL ?? 'https://forcapedia.com'}/article/${slug}`],
         }),
       }).catch(() => {}) // never block the stream — silently ignore network failures
+
+      // Google Indexing API: notify Google for faster crawling — fire-and-forget
+      void pingGoogleIndexing(
+        `${process.env.NEXT_PUBLIC_SITE_URL ?? 'https://forcapedia.com'}/article/${slug}`
+      )
     }
 
     // ── c. Charge tokens (non-blocking — never fail the done event) ──

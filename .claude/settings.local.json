@@ -53,7 +53,8 @@
       "Bash(grep -rn user_usage c:UsersshaikDesktopforcapedia --include=*.ts --include=*.tsx)",
       "Bash(grep -rn \"isObserver\\\\|getMaxMembers\\\\|getMaxDurationSeconds\\\\|getDefaultBadge\" c:UsersshaikDesktopforcapedialib --include=*.ts)",
       "Bash(find c:UsersshaikDesktopforcapedia -type f \\\\\\(-name *.ts -o -name *.tsx -o -name *.js -o -name *.jsx \\\\\\) ! -path */.next/* ! -path */node_modules/*)",
-      "Bash(xargs grep:*)"
+      "Bash(xargs grep:*)",
+      "Bash(find c:/Users/shaik/Desktop/forcapedia -name *.sql -o -name migration* -o -name schema*)"
     ]
   }
 }
