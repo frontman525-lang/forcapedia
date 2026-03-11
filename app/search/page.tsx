@@ -544,6 +544,9 @@ function SearchContent() {
         .sp-bg {
           position: fixed; inset: 0; z-index: 0;
           background: #000; overflow: hidden;
+          transform: translateZ(0);
+          -webkit-transform: translateZ(0);
+          will-change: transform;
         }
         .sp-bg::before {
           content: ''; position: absolute; inset: 0;

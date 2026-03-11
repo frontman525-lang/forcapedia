@@ -11,6 +11,7 @@
 //   { type: 'error', message: string }
 import { createClient }        from '@/lib/supabase/server'
 import { createAdminClient }   from '@/lib/supabase/admin'
+import { getEffectiveTier }    from '@/lib/getEffectiveTier'
 import { streamArticle }       from '@/lib/ai'
 import { getWikiArticle }      from '@/lib/wikipedia'
 import { pingGoogleIndexing }  from '@/lib/google-indexing'
@@ -77,23 +78,20 @@ export async function POST(req: Request) {
   const now        = new Date()
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
 
-  // Read tier via user session (RLS returns the correct current row)
-  const { data: tierRow } = await supabase
-    .from('user_usage')
-    .select('tier')
-    .eq('user_id', user.id)
-    .maybeSingle()
+  const admin = createAdminClient()   // bypass RLS for all DB writes below
 
-  // Read tokens_used for current period only
-  const { data: usageRow } = await supabase
-    .from('user_usage')
-    .select('tokens_used')
-    .eq('user_id', user.id)
-    .gte('period_start', monthStart)
-    .single()
+  // Read tier authoritatively (subscriptions table, not stale user_usage.tier)
+  const [tier, usageRow] = await Promise.all([
+    getEffectiveTier(user.id, admin),
+    supabase
+      .from('user_usage')
+      .select('tokens_used')
+      .eq('user_id', user.id)
+      .gte('period_start', monthStart)
+      .single(),
+  ])
 
-  const tier       = tierRow?.tier          ?? 'free'
-  const tokensUsed = usageRow?.tokens_used  ?? 0
+  const tokensUsed = usageRow.data?.tokens_used ?? 0
   const tokenLimit = tier === 'free' ? 50_000 : tier === 'tier1' ? 2_000_000 : 4_000_000
 
   if (tokensUsed >= tokenLimit) {
@@ -104,7 +102,6 @@ export async function POST(req: Request) {
   }
 
   // ── 4. Race condition guard — article already exists? ────────
-  const admin = createAdminClient()   // bypass RLS for all DB writes below
   const { data: existing } = await admin
     .from('articles')
     .select('slug')

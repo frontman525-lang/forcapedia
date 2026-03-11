@@ -242,7 +242,13 @@ export default function ParticleCanvas({ fullScreen = false, count = 80 }: Props
     <canvas
       ref={ref}
       aria-hidden="true"
-      style={{ position: 'fixed', inset: 0, zIndex: 1, pointerEvents: 'none', display: 'block' }}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 1, pointerEvents: 'none', display: 'block',
+        // GPU compositor layer — prevents scroll-jitter on iOS Safari / Android Chrome
+        transform: 'translateZ(0)',
+        WebkitTransform: 'translateZ(0)',
+        willChange: 'transform',
+      }}
     />
   )
 }

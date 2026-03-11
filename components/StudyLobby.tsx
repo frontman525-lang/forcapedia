@@ -242,7 +242,7 @@ function ActionTile({
 
 function AvatarCircle({ name, size, src }: { name: string; size: number; src?: string | null }) {
   const [imgFailed, setImgFailed] = useState(false)
-  const colors = ['#C9A96E','#7FB7F7','#6FCF97','#F47C7C','#A78BFA']
+  const colors = ['#C9A96E','#B8925A','#D4B483','#A07840','#C4A96B']
   const color  = colors[(name.charCodeAt(0) || 0) % colors.length]
 
   if (src && !imgFailed) {
@@ -537,14 +537,22 @@ export default function StudyLobby({
         backdropFilter: 'blur(12px)',
       }}>
 
-        {/* Left: Logo */}
-        <Link href="/" style={{
-          color: 'var(--gold)', textDecoration: 'none',
-          fontFamily: 'var(--font-sans)', fontSize: '15px', fontWeight: 600,
-          letterSpacing: '0.01em',
-        }}>
-          Forcapedia
-        </Link>
+        {/* Left: Back button */}
+        <button
+          onClick={() => router.back()}
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer', padding: '4px',
+            display: 'flex', alignItems: 'center', color: 'var(--text-secondary)',
+            transition: 'color 0.15s',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.color = 'var(--text-primary)' }}
+          onMouseLeave={e => { e.currentTarget.style.color = 'var(--text-secondary)' }}
+          aria-label="Go back"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M19 12H5M12 5l-7 7 7 7"/>
+          </svg>
+        </button>
 
         {/* Center: Tabs */}
         <div style={{

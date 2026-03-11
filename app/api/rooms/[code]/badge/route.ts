@@ -4,6 +4,7 @@
 import { NextResponse }      from 'next/server'
 import { createClient }      from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { getEffectiveTier }  from '@/lib/getEffectiveTier'
 import { broadcast, ch }     from '@/lib/soketi/server'
 import { TIER1_BADGES, TIER2_BADGES } from '@/lib/rooms'
 
@@ -38,13 +39,8 @@ export async function PATCH(req: Request, { params }: Props) {
     .maybeSingle()
   if (!member) return NextResponse.json({ error: 'Not in room.' }, { status: 403 })
 
-  // Get user tier
-  const { data: usage } = await supabase
-    .from('user_usage')
-    .select('tier')
-    .eq('user_id', user.id)
-    .single()
-  const tier = usage?.tier ?? 'free'
+  // Get user tier (authoritative — checks subscriptions table to avoid stale user_usage.tier)
+  const tier = await getEffectiveTier(user.id, admin)
 
   // Validate badge is allowed for this tier (null = remove badge)
   if (badge !== null && badge !== undefined) {

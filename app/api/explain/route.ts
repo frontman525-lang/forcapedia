@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { getEffectiveTier } from '@/lib/getEffectiveTier'
 
 const DAILY_LIMITS = { free: 1, tier1: 40, tier2: 80 } as const
 
@@ -35,13 +37,15 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Rate limit check ──────────────────────────────────────────────────────
-  const { data: usage } = await supabase
-    .from('user_usage')
-    .select('tier, explain_count, explain_period_start')
-    .eq('user_id', user.id)
-    .single()
-
-  const tier = ((usage?.tier) ?? 'free') as keyof typeof DAILY_LIMITS
+  const admin = createAdminClient()
+  const [effectiveTier, usageRes] = await Promise.all([
+    getEffectiveTier(user.id, admin),
+    supabase.from('user_usage').select('explain_count, explain_period_start').eq('user_id', user.id).single(),
+  ])
+  const usage = usageRes.data
+  const tier = (effectiveTier as keyof typeof DAILY_LIMITS) in DAILY_LIMITS
+    ? (effectiveTier as keyof typeof DAILY_LIMITS)
+    : 'free'
   const limit = DAILY_LIMITS[tier] ?? 1
 
   const today = new Date().toISOString().split('T')[0]

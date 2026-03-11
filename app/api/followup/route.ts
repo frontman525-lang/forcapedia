@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { getEffectiveTier } from '@/lib/getEffectiveTier'
 import { getWikiArticle } from '@/lib/wikipedia'
 
 // ── Provider chain: Groq (cheapest) → Gemini → DeepSeek ──────────
@@ -88,7 +90,8 @@ export async function POST(request: Request) {
   }
 
   // ── 3. Tier + rate limit (parallel DB calls) ───────────────────
-  const [existingRes, usageRes] = await Promise.all([
+  const admin = createAdminClient()
+  const [existingRes, tier] = await Promise.all([
     supabase
       .from('follow_ups')
       .select('id')
@@ -96,14 +99,8 @@ export async function POST(request: Request) {
       .eq('article_slug', articleSlug)
       .limit(1)
       .single(),
-    supabase
-      .from('user_usage')
-      .select('tier')
-      .eq('user_id', user.id)
-      .single(),
+    getEffectiveTier(user.id, admin),
   ])
-
-  const tier = usageRes.data?.tier ?? 'free'
 
   if (tier === 'free' && existingRes.data) {
     return NextResponse.json(

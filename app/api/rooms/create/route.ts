@@ -4,6 +4,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { getEffectiveTier } from '@/lib/getEffectiveTier'
 import {
   generateRoomCode,
   getMaxMembers,
@@ -26,15 +27,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Room name is required' }, { status: 400 })
   }
 
-  const { data: usage } = await supabase
-    .from('user_usage')
-    .select('tier, preferred_badge')
-    .eq('user_id', user.id)
-    .maybeSingle()
-
-  const tier = usage?.tier ?? 'free'
-
   const admin = createAdminClient()
+
+  // Use subscriptions as authoritative tier source (user_usage.tier can be stale
+  // when Razorpay fires subscription.cancelled early on cancel_at_period_end)
+  const [tier, usageRes] = await Promise.all([
+    getEffectiveTier(user.id, admin),
+    admin.from('user_usage').select('preferred_badge').eq('user_id', user.id).maybeSingle(),
+  ])
+  const usage = usageRes.data
 
   if (tier === 'free') {
     // Free plan: 1 room per day — resets at midnight IST
