@@ -72,34 +72,36 @@ export default function Nav() {
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
 
         {/* Theme toggle */}
-        <button
-          onClick={toggle}
-          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-          title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
-          style={{
-            width: '36px', height: '36px',
-            borderRadius: '50%',
-            border: '1px solid var(--border)',
-            background: 'var(--btn-bg)',
-            color: 'var(--text-tertiary)',
-            cursor: 'pointer',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            transition: 'all 0.2s',
-            flexShrink: 0,
-          }}
-          onMouseEnter={e => {
-            e.currentTarget.style.borderColor = 'var(--border-gold)'
-            e.currentTarget.style.color = 'var(--gold)'
-            e.currentTarget.style.background = 'var(--gold-dim)'
-          }}
-          onMouseLeave={e => {
-            e.currentTarget.style.borderColor = 'var(--border)'
-            e.currentTarget.style.color = 'var(--text-tertiary)'
-            e.currentTarget.style.background = 'var(--btn-bg)'
-          }}
-        >
-          {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
-        </button>
+        {!isHome && (
+          <button
+            onClick={toggle}
+            aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+            style={{
+              width: '36px', height: '36px',
+              borderRadius: '50%',
+              border: '1px solid var(--border)',
+              background: 'var(--btn-bg)',
+              color: 'var(--text-tertiary)',
+              cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              transition: 'all 0.2s',
+              flexShrink: 0,
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.borderColor = 'var(--border-gold)'
+              e.currentTarget.style.color = 'var(--gold)'
+              e.currentTarget.style.background = 'var(--gold-dim)'
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.borderColor = 'var(--border)'
+              e.currentTarget.style.color = 'var(--text-tertiary)'
+              e.currentTarget.style.background = 'var(--btn-bg)'
+            }}
+          >
+            {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
+          </button>
+        )}
 
         {/* Profile / sign-in */}
         <ProfileButton />
