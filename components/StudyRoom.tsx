@@ -385,7 +385,8 @@ function SelectionToolbar({ chatSidebarRef, isHost, isObserver, explainLoading, 
       const reservedBottom = window.innerWidth < 768 ? 54 : 0
       const below = window.innerHeight - last.bottom - reservedBottom
       const y = below < TH + M + 8 ? Math.max(M, first.top - TH - M) : last.bottom + M
-      const x = Math.max(80, Math.min(window.innerWidth - 80, last.left + last.width / 2))
+      const tbHalfW = 130 // approximate half-width of the toolbar pill
+      const x = Math.max(tbHalfW + 8, Math.min(window.innerWidth - tbHalfW - 8, last.left + last.width / 2))
       setSel({ text, x, y })
     }
 
@@ -550,7 +551,7 @@ export default function StudyRoom({
   const [cooldownUntil,   setCooldownUntil]   = useState(0)
 
   const [sharedExplain,   setSharedExplain]   = useState<SharedExplain | null>(null)
-  const [navNotif,        setNavNotif]        = useState<NavNotification | null>(null)
+  // navNotif removed (Follow Admin popup deleted — BUG 2)
   const [navRequest,      setNavRequest]      = useState<NavRequest | null>(null)
   const [sessionEnded,    setSessionEnded]    = useState(false)
   const [timeWarning,     setTimeWarning]     = useState(false)
@@ -600,6 +601,7 @@ export default function StudyRoom({
   const [related,            setRelated]            = useState<RelatedArticle[]>([])
   const timerSpanRef         = useRef<HTMLSpanElement>(null)
   const [reconnecting,       setReconnecting]       = useState(false)
+  const [upgradePopupDismissed, setUpgradePopupDismissed] = useState(false)
   const [closingRoom,        setClosingRoom]        = useState(false)
   const [navBlocked,         setNavBlocked]         = useState(false)
   const [codeCopied,         setCodeCopied]         = useState(false)
@@ -818,17 +820,12 @@ export default function StudyRoom({
     // ── Article channel ───────────────────────────────────────────────────────
     articleCh.bind('navigate', (payload: { slug: string; title: string }) => {
       fetchArticle(payload.slug)
-      setNavNotif({ slug: payload.slug, title: payload.title })
-      setTimeout(() => setNavNotif(null), 8000)
+      // navNotif popup removed — members navigate silently with the host
     })
     articleCh.bind('nav_request', (payload: NavRequest) => {
       if (currentUser.isHost) setNavRequest(payload)
     })
-    articleCh.bind('scroll', (payload: { pct: number }) => {
-      if (currentUser.isHost) return
-      const { scrollHeight, clientHeight } = document.documentElement
-      window.scrollTo({ top: payload.pct * (scrollHeight - clientHeight), behavior: 'smooth' })
-    })
+    // scroll sync removed — members can scroll independently
 
     // ── Admission channel ─────────────────────────────────────────────────────
     admissionCh.bind('highlight_request', (payload: PendingHighlight) => {
@@ -842,7 +839,13 @@ export default function StudyRoom({
       setPendingAdmissions(prev => prev.some(p => p.userId === payload.userId) ? prev : [...prev, payload])
     })
     admissionCh.bind('admit_approved', (payload: { userId: string }) => {
-      if (payload.userId === currentUser.id) { setIsPendingState(false); return }
+      if (payload.userId === currentUser.id) {
+        // Reload the page so the server re-renders with join_status: 'approved'
+        // This is the most reliable path — no race conditions or stale state.
+        router.refresh()
+        setIsPendingState(false)
+        return
+      }
       setMembers(prev => prev.map(m => m.user_id === payload.userId ? { ...m, join_status: 'approved' } : m))
     })
     admissionCh.bind('admit_rejected', (payload: { userId: string }) => {
@@ -1593,8 +1596,8 @@ export default function StudyRoom({
         </div>
       )}
 
-      {/* ── TIME LIMIT UPGRADE MODAL (Feature 6) ──────────────────────────── */}
-      {timeLimitHit && !sessionEnded && !currentUser.isHost && (
+      {/* ── TIME LIMIT UPGRADE MODAL ──────────────────────────────────────── */}
+      {timeLimitHit && !sessionEnded && !currentUser.isHost && !upgradePopupDismissed && (
         <div style={{
           position: 'fixed', inset: 0, zIndex: 10000,
           background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)',
@@ -1604,12 +1607,27 @@ export default function StudyRoom({
             background: 'rgba(22,20,18,0.99)', border: '1px solid rgba(255,255,255,0.1)',
             borderRadius: '20px', padding: '2rem', maxWidth: 360, width: '100%',
             display: 'flex', flexDirection: 'column', gap: '1rem', textAlign: 'center',
+            position: 'relative',
           }}>
+            {/* X dismiss button */}
+            <button
+              onClick={() => setUpgradePopupDismissed(true)}
+              style={{
+                position: 'absolute', top: '0.75rem', right: '0.75rem',
+                background: 'none', border: 'none',
+                color: 'rgba(240,237,232,0.3)', cursor: 'pointer',
+                fontSize: '16px', lineHeight: 1, padding: '4px',
+                transition: 'color 0.15s',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.color = 'rgba(240,237,232,0.7)' }}
+              onMouseLeave={e => { e.currentTarget.style.color = 'rgba(240,237,232,0.3)' }}
+              title="Dismiss"
+            >✕</button>
             <p style={{ fontFamily: 'Georgia,serif', fontSize: '1.5rem', fontWeight: 300, color: '#F0EDE8' }}>
               Session time limit reached
             </p>
             <p style={{ fontSize: '13px', color: 'rgba(240,237,232,0.5)', lineHeight: 1.6 }}>
-              Your {!timeLimitSeconds ? '' : timeLimitSeconds >= 18000 ? '5-hour' : timeLimitSeconds >= 7200 ? '2-hour' : '20-minute'} session has ended.
+              Your {!timeLimitSeconds ? '' : timeLimitSeconds >= 18000 ? '5-hour' : timeLimitSeconds >= 7200 ? '2-hour' : '25-minute'} session has ended.
               Upgrade to study longer without interruption.
             </p>
             <a href="/pricing" style={{
@@ -1619,11 +1637,11 @@ export default function StudyRoom({
             }}>
               View Plans →
             </a>
-            <button onClick={() => router.push('/study')} style={{
+            <button onClick={() => setUpgradePopupDismissed(true)} style={{
               background: 'none', border: 'none', color: 'rgba(240,237,232,0.3)',
               fontSize: '12px', cursor: 'pointer', padding: '0',
             }}>
-              Return home
+              Maybe Later
             </button>
           </div>
         </div>
@@ -1655,10 +1673,10 @@ export default function StudyRoom({
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0, minWidth: 0 }}>
           <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#6FCF97', display: 'block', flexShrink: 0 }} />
           <span style={{
-            fontFamily: 'Georgia,serif', fontSize: isMobile ? '13px' : '14px',
+            fontFamily: 'Georgia,serif', fontSize: isMobile ? '12px' : '14px',
             color: '#F0EDE8', fontWeight: 300,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-            maxWidth: isMobile ? 110 : 'none',
+            maxWidth: isMobile ? 'clamp(60px, 28vw, 110px)' : 'none',
           }}>
             {room.room_name ?? (activeMembers.find(m => m.is_host)?.display_name ?? 'Study') + "'s Room"}
           </span>
@@ -1889,7 +1907,7 @@ export default function StudyRoom({
 
       {/* ── PENDING ADMISSIONS QUEUE ──────────────────────────────────────── */}
       {currentUser.isHost && pendingAdmissions.length > 0 && (
-        <div style={{ position: 'fixed', top: 60, left: 16, zIndex: 300, display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+        <div style={{ position: 'fixed', top: 60, left: 16, right: isMobile ? 16 : 'auto', zIndex: 300, display: 'flex', flexDirection: 'column', gap: '0.4rem', maxWidth: isMobile ? 'calc(100vw - 32px)' : 340 }}>
           {pendingAdmissions.map(p => (
             <div key={p.userId} style={{ background: 'rgba(22,20,18,0.97)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '10px', padding: '0.6rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.5rem', boxShadow: '0 4px 24px rgba(0,0,0,0.5)' }}>
               <Avatar name={p.displayName} color={p.avatarColor} size={22} />
@@ -2049,7 +2067,7 @@ export default function StudyRoom({
             paddingTop: hasTabs ? '0' : isMobile ? '1.25rem' : '2rem',
             paddingLeft: isMobile ? '1rem' : '1.5rem',
             paddingRight: chatOpen && !isMobile ? '336px' : isMobile ? '1rem' : '1.5rem',
-            paddingBottom: isMobile ? (chatOpen ? '360px' : '80px') : '3rem',
+            paddingBottom: isMobile ? (chatOpen ? 'calc(360px + env(safe-area-inset-bottom, 0px))' : 'calc(80px + env(safe-area-inset-bottom, 0px))') : '3rem',
             transition: 'padding-right 0.28s cubic-bezier(0.4,0,0.2,1), padding-bottom 0.32s cubic-bezier(0.32,0.72,0,1)',
           }}
         >
@@ -2488,8 +2506,10 @@ export default function StudyRoom({
         {/* ── MOBILE BOTTOM SHEET ──────────────────────────────────────────── */}
         {isMobile && (
           <div style={{
-            position: 'fixed', left: 0, right: 0, bottom: 54, zIndex: 90,
-            height: chatOpen ? (chatExpanded ? 'calc(var(--app-sh) - 54px - 52px)' : 280) : 0,
+            position: 'fixed', left: 0, right: 0,
+            bottom: 'calc(54px + env(safe-area-inset-bottom, 0px))',
+            zIndex: 90,
+            height: chatOpen ? (chatExpanded ? 'calc(var(--app-sh) - 54px - env(safe-area-inset-bottom, 0px) - 52px)' : 280) : 0,
             transition: 'height 0.32s cubic-bezier(0.32, 0.72, 0, 1)',
             overflow: 'hidden',
             display: 'flex', flexDirection: 'column',
@@ -2630,9 +2650,13 @@ export default function StudyRoom({
         {/* ── MOBILE BOTTOM ACTION BAR ─────────────────────────────────────── */}
         {isMobile && (
           <div style={{
-            position: 'fixed', left: 0, right: 0, bottom: 0, height: 54, zIndex: 100,
+            position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 100,
+            height: 'calc(54px + env(safe-area-inset-bottom, 0px))',
             background: 'rgba(16,14,12,0.98)', borderTop: '1px solid rgba(255,255,255,0.07)',
-            display: 'flex', alignItems: 'center', padding: '0 0.75rem', gap: '0.35rem',
+            display: 'flex', alignItems: 'center',
+            padding: '0 0.75rem',
+            paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+            gap: '0.35rem',
             backdropFilter: 'blur(16px)', userSelect: 'none',
           }}>
             {/* Chat / Doubts toggle */}
@@ -2863,25 +2887,7 @@ export default function StudyRoom({
         </div>
       )}
 
-      {/* ── NAV NOTIFICATION ─────────────────────────────────────────────── */}
-      {navNotif && (
-        <div style={{
-          position: 'fixed', top: 64, left: '50%', transform: 'translateX(-50%)',
-          background: 'rgba(22,20,18,0.95)', border: '1px solid rgba(201,169,110,0.2)',
-          borderRadius: '10px', padding: '0.6rem 1rem', zIndex: 120,
-          display: 'flex', gap: '0.75rem', alignItems: 'center',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-        }}>
-          <span style={{ fontSize: '13px', color: 'rgba(240,237,232,0.7)' }}>
-            Host moved to <strong style={{ color: '#F0EDE8' }}>{navNotif.title}</strong>
-          </span>
-          <button onClick={() => { fetchArticle(navNotif.slug); setNavNotif(null) }} style={{
-            background: 'rgba(201,169,110,0.15)', border: '1px solid rgba(201,169,110,0.25)',
-            borderRadius: '6px', color: '#C9A96E', fontSize: '12px', padding: '3px 10px', cursor: 'pointer',
-          }}>Follow →</button>
-          <button onClick={() => setNavNotif(null)} style={{ background: 'none', border: 'none', color: 'rgba(240,237,232,0.3)', cursor: 'pointer', fontSize: '13px' }}>Stay</button>
-        </div>
-      )}
+      {/* Follow Admin popup removed — members follow host navigation silently (BUG 2) */}
 
       {/* ── NAV REQUEST (host sees) ───────────────────────────────────────── */}
       {navRequest && currentUser.isHost && (

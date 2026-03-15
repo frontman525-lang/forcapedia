@@ -118,7 +118,7 @@ export default async function RoomPage({ params }: Props) {
     name:        member?.display_name ?? (user.user_metadata?.full_name as string | undefined)?.split(' ')[0] ?? 'Guest',
     avatarColor: member?.avatar_color ?? '#7EB8F7',
     isHost:      member?.is_host ?? false,
-    isObserver:  member?.is_observer ?? true,
+    isObserver:  false, // all users can participate (BUG 3 fix)
     tier:        usageRes.data?.tier ?? 'free',
     badge:       member?.badge ?? null,
   }

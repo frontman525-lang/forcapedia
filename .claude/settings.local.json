@@ -59,7 +59,8 @@
       "Bash(grep -r \"api/followup\\\\|api/rooms.*search\" --include=*.tsx --include=*.ts)",
       "Bash(grep -rn fetch.*/api --include=*.tsx components/ArticleView.tsx app/room/[code]/chat/page.tsx)",
       "Bash(npx tsx:*)",
-      "Bash(echo 'node -e \"\"const fs=require\\(\\\\\"\"fs\\\\\"\"\\); const j=JSON.parse\\(fs.readFileSync\\(\\\\\"\"path/to/key.json\\\\\"\",\\\\\"\"utf8\\\\\"\"\\)\\); console.log\\(JSON.stringify\\(j\\)\\)\"\"')"
+      "Bash(echo 'node -e \"\"const fs=require\\(\\\\\"\"fs\\\\\"\"\\); const j=JSON.parse\\(fs.readFileSync\\(\\\\\"\"path/to/key.json\\\\\"\",\\\\\"\"utf8\\\\\"\"\\)\\); console.log\\(JSON.stringify\\(j\\)\\)\"\"')",
+      "Bash(ls -la c:UsersshaikDesktopforcapediaappapirooms[code])"
     ]
   }
 }

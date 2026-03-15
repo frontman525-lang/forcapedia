@@ -41,8 +41,10 @@ export function canCreateRoom(tier: string): boolean {
   return tier === 'free' || tier === 'tier1' || tier === 'tier2'
 }
 
-export function isObserverTier(tier: string): boolean {
-  return tier === 'free' || !tier
+export function isObserverTier(_tier: string): boolean {
+  // All users (including free) can participate — chat, highlight, react.
+  // Observer role removed as per product decision (BUG 3 fix).
+  return false
 }
 
 // ── Badge system ───────────────────────────────────────────────────────────────
