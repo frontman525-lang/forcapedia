@@ -55,7 +55,9 @@ html.light .hb-bg::before {
   position: fixed;
   bottom: -87vw;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translateX(-50%) translateZ(0);
+  -webkit-transform: translateX(-50%) translateZ(0);
+  will-change: transform;
   width: 110vw;
   height: 110vw;
   max-width: 1500px;

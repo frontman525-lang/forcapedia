@@ -79,7 +79,7 @@ export default async function PricingPage({ searchParams }: Props) {
       <HomeBackground noMars />
       <ParticleCanvas fullScreen count={80} />
       <Nav />
-      <main className="starfield-content" style={{ minHeight: '100vh', paddingTop: '64px', paddingBottom: '6rem', position: 'relative', zIndex: 10 }}>
+      <main className="starfield-content" style={{ minHeight: 'var(--app-h)', paddingTop: '64px', paddingBottom: '6rem', position: 'relative', zIndex: 10 }}>
         <div style={{ maxWidth: '1020px', margin: '0 auto', padding: '2.8rem 1.5rem 0' }}>
           <PricingPlans
             user={Boolean(user)}

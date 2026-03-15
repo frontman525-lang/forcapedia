@@ -44,7 +44,7 @@ export default function HomePage() {
 
       <main
         style={{
-          minHeight: '100vh',
+          minHeight: 'var(--app-h)',
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',

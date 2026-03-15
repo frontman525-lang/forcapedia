@@ -66,6 +66,8 @@ html, body {
   min-height: 100%;
   font-family: 'Inter', system-ui, sans-serif;
   overflow-x: hidden;
+  /* Re-declare — this style block loads after globals.css and would otherwise reset it */
+  overscroll-behavior: none;
 }
 
 /* ── Starfield bg ── */
@@ -75,6 +77,10 @@ html, body {
   z-index: 0;
   background: #000;
   overflow: hidden;
+  /* GPU compositor layer — stays locked during scroll/overscroll bounce */
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  will-change: transform;
 }
 .bg::before {
   content: '';
@@ -108,7 +114,9 @@ html, body {
   position: fixed;
   bottom: -87vw;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translateX(-50%) translateZ(0);
+  -webkit-transform: translateX(-50%) translateZ(0);
+  will-change: transform;
   width: 110vw;
   height: 110vw;
   max-width: 1500px;
@@ -160,7 +168,7 @@ html, body {
 
 /* ── PAGE ── */
 .page {
-  position: relative; z-index: 10; min-height: 100vh;
+  position: relative; z-index: 10; min-height: var(--app-h);
   display: flex; flex-direction: column; align-items: center;
   justify-content: center;
   padding: clamp(1.5rem, 5vw, 2rem) 1rem;

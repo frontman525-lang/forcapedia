@@ -593,7 +593,7 @@ export default function SearchPage() {
       <div className="sp-bg" />
       <Nav />
       <main style={{
-        minHeight: '100vh',
+        minHeight: 'var(--app-h)',
         paddingTop: 'clamp(72px, 10vw, 90px)',
         paddingBottom: '6rem',
         position: 'relative',
