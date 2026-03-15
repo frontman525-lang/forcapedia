@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import Link from 'next/link'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { getPusher, ch } from '@/lib/soketi/client'
 import type { PusherClient } from '@/lib/soketi/client'
 
@@ -121,7 +123,14 @@ function ChatBubble({ msg, currentUserId, isHost, roomCode, onPin, onDelete }: {
 
   if (msg.kind === 'explain') {
     let parsed: { selectedText: string; explanation: string } | null = null
-    try { parsed = JSON.parse(msg.content) } catch { /* ignore */ }
+    // Support both JSON format and ||| SEP format used by StudyRoom
+    const SEP = '|||'
+    try { parsed = JSON.parse(msg.content) } catch {
+      if (msg.content.includes(SEP)) {
+        const [sel, exp] = msg.content.split(SEP)
+        if (sel && exp) parsed = { selectedText: sel, explanation: exp }
+      }
+    }
     return (
       <div style={{ background: 'rgba(201,169,110,0.06)', border: '1px solid rgba(201,169,110,0.12)', borderRadius: '8px', padding: '0.5rem 0.6rem' }}>
         <p style={{ fontSize: '10px', color: '#C9A96E', fontFamily: 'monospace', marginBottom: '0.3rem' }}>
@@ -169,7 +178,22 @@ function ChatBubble({ msg, currentUserId, isHost, roomCode, onPin, onDelete }: {
           borderRadius: isMe ? '10px 10px 2px 10px' : '10px 10px 10px 2px',
           padding: '0.45rem 0.7rem',
         }}>
-          <p style={{ fontSize: '14px', color: '#F0EDE8', lineHeight: 1.55, wordBreak: 'break-word' }}>{msg.content}</p>
+          <div style={{ fontSize: '14px', color: '#F0EDE8', lineHeight: 1.55, wordBreak: 'break-word' }}>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                p: ({ children }) => <p style={{ margin: 0, lineHeight: 1.55 }}>{children}</p>,
+                strong: ({ children }) => <strong style={{ color: '#F0EDE8', fontWeight: 600 }}>{children}</strong>,
+                em: ({ children }) => <em style={{ color: 'rgba(240,237,232,0.75)' }}>{children}</em>,
+                code: ({ children }) => <code style={{ background: 'rgba(255,255,255,0.08)', borderRadius: '3px', padding: '1px 4px', fontSize: '12px', fontFamily: 'monospace' }}>{children}</code>,
+                ul: ({ children }) => <ul style={{ margin: '4px 0', paddingLeft: '1.2em' }}>{children}</ul>,
+                ol: ({ children }) => <ol style={{ margin: '4px 0', paddingLeft: '1.2em' }}>{children}</ol>,
+                li: ({ children }) => <li style={{ lineHeight: 1.5 }}>{children}</li>,
+              }}
+            >
+              {msg.content}
+            </ReactMarkdown>
+          </div>
         </div>
         {!isMe && !reported && !isHost && (
           <button onClick={async () => {

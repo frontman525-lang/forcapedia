@@ -161,7 +161,7 @@ function MobileEmptyState({ onSearch }: { onSearch: () => void }) {
           <style>{`
             @keyframes emptyExitUp { from { opacity:1; transform:translateY(0); } to { opacity:0; transform:translateY(-18px); } }
             @keyframes emptyEnterBelow { from { opacity:0; transform:translateY(18px); } to { opacity:1; transform:translateY(0); } }
-            @keyframes fadeInUp { from { opacity:0; transform:translateX(-50%) translateY(6px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
+            @keyframes fadeInUp { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
           `}</style>
           {prev !== null && (
             <div style={{ ...rowStyle, animation: `emptyExitUp ${ANIM_MS}ms ease forwards` }}>
@@ -349,13 +349,15 @@ interface SelectionToolbarProps {
   chatSidebarRef: React.RefObject<HTMLElement | null>
   isHost: boolean
   isObserver: boolean
+  isPaid: boolean
   explainLoading: boolean
   onExplain: (text: string) => void
+  onExplainUpgrade: () => void
   onHighlight: (text: string) => void
   onAsk: (text: string) => void
 }
 
-function SelectionToolbar({ chatSidebarRef, isHost, isObserver, explainLoading, onExplain, onHighlight, onAsk }: SelectionToolbarProps) {
+function SelectionToolbar({ chatSidebarRef, isHost, isObserver, isPaid, explainLoading, onExplain, onExplainUpgrade, onHighlight, onAsk }: SelectionToolbarProps) {
   const [sel, setSel] = useState<{ text: string; x: number; y: number } | null>(null)
   const [copied, setCopied] = useState(false)
   const tbRef = useRef<HTMLDivElement>(null)
@@ -463,16 +465,21 @@ function SelectionToolbar({ chatSidebarRef, isHost, isObserver, explainLoading, 
       boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
       animation: 'fadeIn 0.15s ease forwards',
     }}>
-      {isHost && (
+      {!isObserver && (
         <>
-          <button onMouseDown={e => e.preventDefault()} onClick={() => act(onExplain)}
-            disabled={explainLoading}
+          <button
+            onMouseDown={e => e.preventDefault()}
+            onClick={() => {
+              if (isHost && isPaid) { act(onExplain) }
+              else { setSel(null); window.getSelection()?.removeAllRanges(); onExplainUpgrade() }
+            }}
+            disabled={isHost && isPaid && explainLoading}
             style={btnStyle()}
             onMouseEnter={e => { e.currentTarget.style.background = 'var(--gold-dim)'; e.currentTarget.style.color = 'var(--gold)' }}
             onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)' }}
           >
             <span style={{ fontSize: '10px', color: 'var(--gold)' }}>✦</span>
-            {explainLoading ? 'Explaining…' : 'Explain'}
+            {isHost && isPaid && explainLoading ? 'Explaining…' : 'Explain'}
           </button>
           <div style={{ width: '1px', height: '16px', background: 'var(--border)', margin: '0 2px' }} />
         </>
@@ -602,6 +609,10 @@ export default function StudyRoom({
   const timerSpanRef         = useRef<HTMLSpanElement>(null)
   const [reconnecting,       setReconnecting]       = useState(false)
   const [upgradePopupDismissed, setUpgradePopupDismissed] = useState(false)
+  const [explainUpgradeModal,   setExplainUpgradeModal]   = useState(false)
+  const [shareUpgradeModal,     setShareUpgradeModal]     = useState(false)
+  const [adminTransferModal,    setAdminTransferModal]    = useState(false)
+  const [transferConfirmMember, setTransferConfirmMember] = useState<Member | null>(null)
   const [closingRoom,        setClosingRoom]        = useState(false)
   const [navBlocked,         setNavBlocked]         = useState(false)
   const [codeCopied,         setCodeCopied]         = useState(false)
@@ -629,7 +640,7 @@ export default function StudyRoom({
       return
     }
     // Desktop sidebar: scrollIntoView works normally
-    scrollChatToBottom()
+    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
 
   // Prefetch chat page so navigation is instant
@@ -1447,6 +1458,18 @@ export default function StudyRoom({
     }
   }
 
+  /** Transfer admin role without leaving the room */
+  async function transferAdminOnly(newHostId: string) {
+    const res = await fetch(`/api/rooms/${roomCode}/transfer`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ newHostId, stayInRoom: true }),
+    })
+    if (res.ok) {
+      setAdminTransferModal(false)
+      setTransferConfirmMember(null)
+    }
+  }
+
   function approveNavRequest() {
     if (!navRequest) return
     hostNavigateTo(navRequest.targetSlug, navRequest.targetTitle)
@@ -1593,6 +1616,96 @@ export default function StudyRoom({
             background: 'none', border: 'none', color: 'rgba(244,124,124,0.5)',
             cursor: 'pointer', padding: '0 2px', fontSize: '12px',
           }}>✕</button>
+        </div>
+      )}
+
+      {/* ── AI EXPLAIN UPGRADE MODAL ──────────────────────────────────────── */}
+      {explainUpgradeModal && (
+        <div
+          onClick={() => setExplainUpgradeModal(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 10001,
+            background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem',
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'rgba(22,20,18,0.99)', border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: '20px', padding: '2rem', maxWidth: 340, width: '100%',
+              display: 'flex', flexDirection: 'column', gap: '1rem', textAlign: 'center',
+              position: 'relative',
+            }}
+          >
+            <button onClick={() => setExplainUpgradeModal(false)} style={{
+              position: 'absolute', top: '0.75rem', right: '0.75rem',
+              background: 'none', border: 'none', color: 'rgba(240,237,232,0.3)',
+              cursor: 'pointer', fontSize: '16px', lineHeight: 1, padding: '4px',
+              transition: 'color 0.15s',
+            }} onMouseEnter={e => { e.currentTarget.style.color = 'rgba(240,237,232,0.7)' }} onMouseLeave={e => { e.currentTarget.style.color = 'rgba(240,237,232,0.3)' }}>✕</button>
+            <span style={{ fontSize: '2rem' }}>✦</span>
+            <p style={{ fontFamily: 'Georgia,serif', fontSize: '1.3rem', fontWeight: 300, color: '#F0EDE8' }}>
+              AI Explain is a paid feature
+            </p>
+            <p style={{ fontSize: '13px', color: 'rgba(240,237,232,0.5)', lineHeight: 1.6 }}>
+              Upgrade to Scholar or Researcher to use AI Explain and share explanations with your room.
+            </p>
+            <a href="/pricing" style={{
+              display: 'block', padding: '0.7rem', textAlign: 'center',
+              background: 'rgba(201,169,110,0.15)', border: '1px solid rgba(201,169,110,0.3)',
+              borderRadius: '10px', color: '#C9A96E', textDecoration: 'none', fontSize: '14px',
+            }}>View Plans →</a>
+            <button onClick={() => setExplainUpgradeModal(false)} style={{
+              background: 'none', border: 'none', color: 'rgba(240,237,232,0.3)',
+              fontSize: '12px', cursor: 'pointer', padding: 0,
+            }}>Maybe Later</button>
+          </div>
+        </div>
+      )}
+
+      {/* ── SHARE WITH CHAT UPGRADE MODAL ─────────────────────────────────── */}
+      {shareUpgradeModal && (
+        <div
+          onClick={() => setShareUpgradeModal(false)}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 10001,
+            background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(6px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem',
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'rgba(22,20,18,0.99)', border: '1px solid rgba(255,255,255,0.1)',
+              borderRadius: '20px', padding: '2rem', maxWidth: 340, width: '100%',
+              display: 'flex', flexDirection: 'column', gap: '1rem', textAlign: 'center',
+              position: 'relative',
+            }}
+          >
+            <button onClick={() => setShareUpgradeModal(false)} style={{
+              position: 'absolute', top: '0.75rem', right: '0.75rem',
+              background: 'none', border: 'none', color: 'rgba(240,237,232,0.3)',
+              cursor: 'pointer', fontSize: '16px', lineHeight: 1, padding: '4px',
+              transition: 'color 0.15s',
+            }} onMouseEnter={e => { e.currentTarget.style.color = 'rgba(240,237,232,0.7)' }} onMouseLeave={e => { e.currentTarget.style.color = 'rgba(240,237,232,0.3)' }}>✕</button>
+            <span style={{ fontSize: '2rem' }}>💬</span>
+            <p style={{ fontFamily: 'Georgia,serif', fontSize: '1.3rem', fontWeight: 300, color: '#F0EDE8' }}>
+              Share with Chat is a paid feature
+            </p>
+            <p style={{ fontSize: '13px', color: 'rgba(240,237,232,0.5)', lineHeight: 1.6 }}>
+              Upgrade to share explanations directly into the study room chat.
+            </p>
+            <a href="/pricing" style={{
+              display: 'block', padding: '0.7rem', textAlign: 'center',
+              background: 'rgba(201,169,110,0.15)', border: '1px solid rgba(201,169,110,0.3)',
+              borderRadius: '10px', color: '#C9A96E', textDecoration: 'none', fontSize: '14px',
+            }}>View Plans →</a>
+            <button onClick={() => setShareUpgradeModal(false)} style={{
+              background: 'none', border: 'none', color: 'rgba(240,237,232,0.3)',
+              fontSize: '12px', cursor: 'pointer', padding: 0,
+            }}>Maybe Later</button>
+          </div>
         </div>
       )}
 
@@ -1871,6 +1984,19 @@ export default function StudyRoom({
           }}>
             <IconChat size={12} />{chatOpen ? 'Hide' : 'Chat'}
           </button>
+        )}
+
+        {/* Transfer Admin button — host only, when paid members exist */}
+        {currentUser.isHost && !isMobile && activeMembers.some(m => !m.is_host && !m.is_observer && (m.badge === 'scholar' || m.badge === 'researcher')) && (
+          <button
+            onClick={() => setAdminTransferModal(true)}
+            style={{
+              background: 'rgba(111,207,151,0.07)', border: '1px solid rgba(111,207,151,0.18)',
+              borderRadius: '6px', color: '#6FCF97', fontSize: '11px',
+              padding: '3px 10px', cursor: 'pointer', flexShrink: 0,
+              transition: 'all 0.2s ease',
+            }}
+          >Transfer Admin</button>
         )}
 
         {/* Leave button */}
@@ -2510,7 +2636,7 @@ export default function StudyRoom({
             bottom: 'calc(54px + env(safe-area-inset-bottom, 0px))',
             zIndex: 90,
             height: chatOpen ? (chatExpanded ? 'calc(var(--app-sh) - 54px - env(safe-area-inset-bottom, 0px) - 52px)' : 280) : 0,
-            transition: 'height 0.32s cubic-bezier(0.32, 0.72, 0, 1)',
+            transition: 'height 0.32s cubic-bezier(0.32, 0.72, 0, 1), box-shadow 0.32s ease',
             overflow: 'hidden',
             display: 'flex', flexDirection: 'column',
             background: 'rgba(18,16,14,0.99)',
@@ -2668,7 +2794,7 @@ export default function StudyRoom({
                 border: `1px solid ${chatOpen ? 'rgba(201,169,110,0.25)' : 'rgba(255,255,255,0.08)'}`,
                 borderRadius: '8px', color: chatOpen ? '#C9A96E' : 'rgba(240,237,232,0.5)',
                 fontSize: '11px', fontFamily: 'monospace', padding: '0.35rem 0', cursor: 'pointer',
-                position: 'relative',
+                position: 'relative', transition: 'all 0.2s ease',
               }}>
               <IconChat size={13} />
               {unreadDoubts > 0 && (
@@ -2740,6 +2866,7 @@ export default function StudyRoom({
                 background: 'none', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px',
                 color: doNotDisturb ? 'rgba(240,237,232,0.25)' : 'rgba(240,237,232,0.5)',
                 padding: '0.35rem 0.5rem', cursor: 'pointer', display: 'flex', alignItems: 'center',
+                transition: 'all 0.2s ease',
               }}>
               <IconBell size={14} muted={doNotDisturb} />
             </button>
@@ -2753,6 +2880,7 @@ export default function StudyRoom({
                 background: 'rgba(244,124,124,0.08)', border: '1px solid rgba(244,124,124,0.15)',
                 borderRadius: '8px', color: '#F47C7C', fontSize: '11px',
                 padding: '0.35rem 0.6rem', cursor: 'pointer', fontFamily: 'monospace',
+                transition: 'all 0.2s ease',
               }}>
               Leave
             </button>
@@ -2778,8 +2906,10 @@ export default function StudyRoom({
         chatSidebarRef={chatSidebarRef}
         isHost={currentUser.isHost}
         isObserver={currentUser.isObserver}
+        isPaid={currentUser.tier === 'tier1' || currentUser.tier === 'tier2'}
         explainLoading={explainLoading}
         onExplain={text => triggerSharedExplain(text)}
+        onExplainUpgrade={() => setExplainUpgradeModal(true)}
         onHighlight={text => highlightOnly(text)}
         onAsk={text => sendDoubt(text)}
       />
@@ -2824,6 +2954,8 @@ export default function StudyRoom({
             <div style={{ padding: '0.6rem 1rem', borderBottom: '1px solid rgba(255,255,255,0.05)', flexShrink: 0 }}>
               <button
                 onClick={() => {
+                  const isPaid = currentUser.tier === 'tier1' || currentUser.tier === 'tier2'
+                  if (!isPaid) { setShareUpgradeModal(true); return }
                   const smartText = `**${currentUser.name}** asked:\n> ${sharedExplain.selectedText}\n\n**AI Answer:**\n${sharedExplain.explanation ?? ''}`
                   setSharedExplain(null)
                   setChatOpen(true)
@@ -3168,6 +3300,87 @@ export default function StudyRoom({
                 color: 'rgba(240,237,232,0.4)', fontSize: '13px', cursor: 'pointer',
               }}>Cancel</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── ADMIN TRANSFER MODAL (standalone, without leaving) ───────────── */}
+      {adminTransferModal && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', zIndex: 10002,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem',
+        }}>
+          <div style={{
+            background: '#1E1C1A', border: '1px solid rgba(255,255,255,0.1)',
+            borderRadius: '20px', padding: '1.75rem', width: 'min(380px, 92vw)',
+            display: 'flex', flexDirection: 'column', gap: '1rem', position: 'relative',
+          }}>
+            <button onClick={() => { setAdminTransferModal(false); setTransferConfirmMember(null) }} style={{
+              position: 'absolute', top: '0.75rem', right: '0.75rem',
+              background: 'none', border: 'none', color: 'rgba(240,237,232,0.3)',
+              cursor: 'pointer', fontSize: '16px', lineHeight: 1, padding: '4px',
+              transition: 'color 0.15s',
+            }} onMouseEnter={e => { e.currentTarget.style.color = 'rgba(240,237,232,0.7)' }} onMouseLeave={e => { e.currentTarget.style.color = 'rgba(240,237,232,0.3)' }}>✕</button>
+
+            {transferConfirmMember ? (
+              /* ── Step 2: Confirm ── */
+              <>
+                <p style={{ fontFamily: 'Georgia,serif', fontSize: '1.2rem', fontWeight: 300, color: '#F0EDE8' }}>
+                  Transfer admin to {transferConfirmMember.display_name}?
+                </p>
+                <p style={{ fontSize: '13px', color: 'rgba(240,237,232,0.5)', lineHeight: 1.6 }}>
+                  You will become a regular member. This cannot be undone without the new host's consent.
+                </p>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button
+                    onClick={() => transferAdminOnly(transferConfirmMember.user_id)}
+                    style={{
+                      flex: 1, padding: '0.6rem',
+                      background: 'rgba(111,207,151,0.12)', border: '1px solid rgba(111,207,151,0.25)',
+                      borderRadius: '8px', color: '#6FCF97', fontSize: '13px', cursor: 'pointer',
+                      transition: 'all 0.2s ease',
+                    }}
+                  >Confirm Transfer</button>
+                  <button onClick={() => setTransferConfirmMember(null)} style={{
+                    flex: 1, padding: '0.6rem', background: 'none',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    borderRadius: '8px', color: 'rgba(240,237,232,0.4)', fontSize: '13px', cursor: 'pointer',
+                  }}>Back</button>
+                </div>
+              </>
+            ) : (
+              /* ── Step 1: Select member ── */
+              <>
+                <p style={{ fontFamily: 'Georgia,serif', fontSize: '1.2rem', fontWeight: 300, color: '#F0EDE8' }}>
+                  Transfer Admin
+                </p>
+                <p style={{ fontSize: '12px', color: 'rgba(240,237,232,0.4)', lineHeight: 1.5 }}>
+                  Only paid members (Scholar / Researcher) can receive admin.
+                </p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                  {activeMembers
+                    .filter(m => !m.is_host && !m.is_observer && (m.badge === 'scholar' || m.badge === 'researcher'))
+                    .map(m => (
+                      <button key={m.user_id} onClick={() => setTransferConfirmMember(m)} style={{
+                        display: 'flex', alignItems: 'center', gap: '0.65rem',
+                        background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)',
+                        borderRadius: '10px', padding: '0.65rem 0.9rem', cursor: 'pointer',
+                        transition: 'background 0.15s',
+                      }}
+                      onMouseEnter={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)' }}
+                      onMouseLeave={e => { e.currentTarget.style.background = 'rgba(255,255,255,0.04)' }}>
+                        <Avatar name={m.display_name} color={m.avatar_color} size={26} />
+                        <div style={{ textAlign: 'left' }}>
+                          <p style={{ fontSize: '13px', color: '#F0EDE8', margin: 0 }}>{m.display_name}</p>
+                          <p style={{ fontSize: '10px', color: m.badge === 'researcher' ? '#C9A96E' : '#7EB8F7', margin: 0, fontFamily: 'monospace', letterSpacing: '0.04em' }}>
+                            {m.badge === 'researcher' ? '◈ Researcher' : '◆ Scholar'}
+                          </p>
+                        </div>
+                      </button>
+                    ))}
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}

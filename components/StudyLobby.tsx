@@ -28,7 +28,7 @@ interface Props {
 type Mode = 'home' | 'create' | 'join'
 type Tab  = 'home' | 'history'
 
-const canCreate = (tier: string) => tier === 'tier1' || tier === 'tier2'
+const freeRoomLimits = (tier: string) => tier === 'free'
 
 function formatDate(iso: string) {
   const d   = new Date(iso)
@@ -75,14 +75,6 @@ function JoinArrowIcon() {
   )
 }
 
-function LockIcon() {
-  return (
-    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
-      <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-    </svg>
-  )
-}
 
 function SpinIcon() {
   return (
@@ -666,26 +658,13 @@ export default function StudyLobby({
                   justifyContent: 'center', flexWrap: 'nowrap',
                   marginBottom: '3rem',
                 }}>
-                  {canCreate(userTier) ? (
-                    <ActionTile
-                      color="gold"
-                      icon={<PlusIcon />}
-                      label="New Room"
-                      sublabel="Start a session"
-                      onClick={() => setMode('create')}
-                    />
-                  ) : (
-                    <Link href="/pricing" style={{ textDecoration: 'none' }}>
-                      <ActionTile
-                        color="gold"
-                        icon={<LockIcon />}
-                        label="New Room"
-                        sublabel="Upgrade to create"
-                        onClick={() => {}}
-                        dim
-                      />
-                    </Link>
-                  )}
+                  <ActionTile
+                    color="gold"
+                    icon={<PlusIcon />}
+                    label="New Room"
+                    sublabel={freeRoomLimits(userTier) ? '1/day · 25 min · 5 members' : 'Start a session'}
+                    onClick={() => setMode('create')}
+                  />
 
                   <ActionTile
                     color="blue"
