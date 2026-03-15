@@ -28,7 +28,6 @@ interface Props {
 type Mode = 'home' | 'create' | 'join'
 type Tab  = 'home' | 'history'
 
-const freeRoomLimits = (tier: string) => tier === 'free'
 
 function formatDate(iso: string) {
   const d   = new Date(iso)
@@ -662,7 +661,7 @@ export default function StudyLobby({
                     color="gold"
                     icon={<PlusIcon />}
                     label="New Room"
-                    sublabel={freeRoomLimits(userTier) ? '1/day · 25 min · 5 members' : 'Start a session'}
+                    sublabel="Start a session"
                     onClick={() => setMode('create')}
                   />
 

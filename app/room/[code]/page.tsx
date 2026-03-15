@@ -3,6 +3,7 @@ import type { Metadata } from 'next'
 import type { CSSProperties as ReactCSS } from 'react'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { broadcast, ch } from '@/lib/soketi/server'
 import StudyRoom from '@/components/StudyRoom'
 
 export const dynamic = 'force-dynamic'
@@ -98,7 +99,16 @@ export default async function RoomPage({ params }: Props) {
       badge:        getDefaultBadge(tier),
     }).select().single()
 
-    if (newMember) member = newMember
+    if (newMember) {
+      member = newMember
+      // Fire the join_request event so the host's admission popup appears.
+      // This is needed because page.tsx bypasses the /api/rooms/join route.
+      await broadcast(ch.admission(upperCode), 'join_request', {
+        userId:      user.id,
+        displayName,
+        avatarColor: MEMBER_COLORS[colorIndex],
+      }).catch(() => null)
+    }
   }
 
   if (!member && !needsPassword) return <RoomFull />

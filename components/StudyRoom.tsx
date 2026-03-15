@@ -537,7 +537,8 @@ export default function StudyRoom({
   const chatSidebarRef     = useRef<HTMLElement>(null)       // chat sidebar — exclude from selection check
   const chatInputRef       = useRef<HTMLInputElement>(null)    // desktop chat input for focus
   const chatBottomRef      = useRef<HTMLDivElement>(null)
-  const mobileMsgsRef      = useRef<HTMLDivElement>(null)  // mobile chat messages container
+  const mobileMsgsRef      = useRef<HTMLDivElement>(null)  // mobile half-sheet messages
+  const fullscreenMsgsRef  = useRef<HTMLDivElement>(null)  // fullscreen chat overlay messages
   const msgTsRef           = useRef<number[]>([]) // retained (harmless)
   const articleCacheRef    = useRef<Map<string, Article>>(new Map())
   const navDebounceRef     = useRef(0)
@@ -554,6 +555,7 @@ export default function StudyRoom({
   const [reactions,       setReactions]       = useState<FloatingReaction[]>([])
   const [chatOpen,        setChatOpen]        = useState(false)
   const [chatExpanded,    setChatExpanded]    = useState(false)
+  const [chatFullscreen,  setChatFullscreen]  = useState(false)
   const [chatInput,       setChatInput]       = useState('')
   const [cooldownUntil,   setCooldownUntil]   = useState(0)
 
@@ -598,7 +600,14 @@ export default function StudyRoom({
   const [passwordInput,      setPasswordInput]      = useState('')
   const [passwordError,      setPasswordError]      = useState('')
   const [passwordLoading,    setPasswordLoading]    = useState(false)
-  const [pendingAdmissions,  setPendingAdmissions]  = useState<PendingAdmission[]>([])
+  const [pendingAdmissions,  setPendingAdmissions]  = useState<PendingAdmission[]>(() =>
+    // Pre-populate from DB data so host sees pending members after a page refresh
+    currentUser.isHost
+      ? initialMembers
+          .filter(m => m.join_status === 'pending' && !m.is_host && !m.is_observer && !m.kicked_at && !m.left_at)
+          .map(m => ({ userId: m.user_id, displayName: m.display_name, avatarColor: m.avatar_color }))
+      : []
+  )
   const [pinnedMessage,      setPinnedMessage]      = useState<ChatMessage | null>(null)
   const [activeTab,          setActiveTab]          = useState<'chat' | 'doubts'>('chat')
   const [unreadDoubts,       setUnreadDoubts]       = useState(0)
@@ -632,19 +641,39 @@ export default function StudyRoom({
   /** Returns the current Pusher socket ID (to exclude self from broadcasts). */
   const socketId = () => pusherRef.current?.connection.socket_id
 
-  /** Scroll chat to bottom — works for both desktop sidebar and mobile sheet */
+  /** Scroll chat to bottom — fullscreen overlay → half-sheet → desktop sidebar */
   function scrollChatToBottom() {
-    // Mobile: scroll the messages container div directly (position:fixed parent breaks scrollIntoView)
+    if (fullscreenMsgsRef.current) {
+      fullscreenMsgsRef.current.scrollTop = fullscreenMsgsRef.current.scrollHeight
+      return
+    }
     if (mobileMsgsRef.current) {
       mobileMsgsRef.current.scrollTop = mobileMsgsRef.current.scrollHeight
       return
     }
-    // Desktop sidebar: scrollIntoView works normally
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
 
-  // Prefetch chat page so navigation is instant
-  useEffect(() => { router.prefetch(`/room/${roomCode}/chat`) }, [roomCode, router])
+  // Scroll to bottom when fullscreen overlay opens
+  useEffect(() => {
+    if (chatFullscreen && fullscreenMsgsRef.current) {
+      fullscreenMsgsRef.current.scrollTop = fullscreenMsgsRef.current.scrollHeight
+    }
+  }, [chatFullscreen])
+
+  // Scroll to bottom when keyboard opens/closes inside fullscreen overlay
+  useEffect(() => {
+    if (!chatFullscreen) return
+    const vv = window.visualViewport
+    if (!vv) return
+    const onResize = () => {
+      if (fullscreenMsgsRef.current) {
+        fullscreenMsgsRef.current.scrollTop = fullscreenMsgsRef.current.scrollHeight
+      }
+    }
+    vv.addEventListener('resize', onResize)
+    return () => vv.removeEventListener('resize', onResize)
+  }, [chatFullscreen])
 
   // Keep DND ref in sync so Soketi closure always reads the latest value
   useEffect(() => { doNotDisturbRef.current = doNotDisturb }, [doNotDisturb])
@@ -2666,26 +2695,19 @@ export default function StudyRoom({
                   </button>
                 ))}
               </div>
-              {/* Controls — 3 buttons: scroll to bottom, full-page, close */}
+              {/* Controls — full-page, close */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
                 <button
-                  onClick={() => scrollChatToBottom()}
-                  title="Scroll to bottom"
+                  onClick={() => setChatFullscreen(true)}
+                  title="Open full chat"
                   style={{ background: 'none', border: 'none', color: 'rgba(240,237,232,0.4)', cursor: 'pointer', padding: '6px', display: 'flex', transition: 'color 0.2s ease' }}
                   onMouseEnter={e => { e.currentTarget.style.color = 'rgba(240,237,232,0.8)' }}
                   onMouseLeave={e => { e.currentTarget.style.color = 'rgba(240,237,232,0.4)' }}
                 >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/>
-                  </svg>
-                </button>
-                <Link href={`/room/${roomCode}/chat`} title="Open full chat page" style={{ color: 'rgba(240,237,232,0.4)', display: 'flex', padding: '6px', transition: 'color 0.2s ease' }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'rgba(240,237,232,0.8)' }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'rgba(240,237,232,0.4)' }}>
                   <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M10 2h4v4M14 2L9 7M6 14H2v-4M2 14l5-5"/>
                   </svg>
-                </Link>
+                </button>
                 <button
                   onClick={() => { setChatOpen(false); setChatExpanded(false) }}
                   title="Close chat"
@@ -2768,6 +2790,137 @@ export default function StudyRoom({
             ) : (
               <div style={{ padding: '0.5rem', textAlign: 'center', flexShrink: 0 }}>
                 <Link href="/pricing" style={{ fontSize: '11px', color: '#C9A96E' }}>Upgrade to chat →</Link>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── FULLSCREEN CHAT OVERLAY (mobile) ─────────────────────────────── */}
+        {isMobile && chatFullscreen && (
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 1000,
+            background: '#0F0D0C', display: 'flex', flexDirection: 'column',
+            color: '#F0EDE8', fontFamily: 'var(--font-sans, system-ui)',
+          }}>
+            {/* Header */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '0.75rem',
+              padding: '0 1rem', height: 52, flexShrink: 0,
+              borderBottom: '1px solid rgba(255,255,255,0.07)',
+              background: 'rgba(15,13,12,0.98)',
+            }}>
+              <button
+                onClick={() => setChatFullscreen(false)}
+                style={{ background: 'none', border: 'none', color: 'rgba(240,237,232,0.45)', display: 'flex', alignItems: 'center', cursor: 'pointer', padding: 0, flexShrink: 0 }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>
+                </svg>
+              </button>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ fontSize: '13px', color: '#F0EDE8', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {room.room_name || `Room ${roomCode}`}
+                </p>
+                <p style={{ fontSize: '10px', color: 'rgba(240,237,232,0.35)', fontFamily: 'monospace' }}>
+                  {activeMembers.length} member{activeMembers.length !== 1 ? 's' : ''}
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '2px', background: 'rgba(255,255,255,0.04)', borderRadius: '100px', padding: '2px', flexShrink: 0 }}>
+                {(['chat', 'doubts'] as const).map(tab => (
+                  <button key={tab} onClick={() => { setActiveTab(tab); if (tab === 'doubts') setUnreadDoubts(0) }} style={{
+                    padding: '4px 10px', borderRadius: '100px', border: 'none',
+                    background: activeTab === tab ? 'rgba(201,169,110,0.18)' : 'none',
+                    color: activeTab === tab ? '#C9A96E' : 'rgba(240,237,232,0.35)',
+                    fontSize: '10px', fontFamily: 'monospace', letterSpacing: '0.05em',
+                    cursor: 'pointer', transition: 'all 0.15s',
+                  }}>
+                    {tab === 'chat' ? 'Chat' : `Doubts${unreadDoubts > 0 ? ` · ${unreadDoubts}` : ''}`}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Members strip */}
+            <div style={{
+              display: 'flex', gap: '0.5rem', alignItems: 'center', flexShrink: 0,
+              padding: '0.4rem 1rem', overflowX: 'auto',
+              borderBottom: '1px solid rgba(255,255,255,0.04)',
+              background: 'rgba(255,255,255,0.015)',
+            }}>
+              {activeMembers.map(m => (
+                <div key={m.user_id} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', flexShrink: 0 }}>
+                  <Avatar name={m.display_name} color={m.avatar_color} size={20} />
+                  <span style={{ fontSize: '11px', color: 'rgba(240,237,232,0.45)', whiteSpace: 'nowrap' }}>{m.display_name.split(' ')[0]}</span>
+                  {m.is_host && <span style={{ fontSize: '8px', color: '#C9A96E', fontFamily: 'monospace' }}>host</span>}
+                </div>
+              ))}
+            </div>
+
+            {/* Messages */}
+            <div ref={fullscreenMsgsRef} style={{ flex: 1, overflowY: 'auto', padding: '0.75rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
+              {messages
+                .filter(msg => activeTab === 'doubts' ? msg.kind === 'doubt' : msg.kind !== 'doubt')
+                .map(msg => <ChatBubble key={msg.id} msg={msg} currentUserId={currentUser.id} isHost={currentUser.isHost} roomCode={roomCode} onPin={pinMessage} onDelete={deleteMessage} />)}
+              <div style={{ height: 1, flexShrink: 0 }} />
+            </div>
+
+            {/* Typing indicator */}
+            {typingNames.length > 0 && (
+              <div style={{ padding: '0 1rem 0.25rem', flexShrink: 0 }}>
+                <span style={{ fontSize: '10px', color: 'rgba(240,237,232,0.35)', fontFamily: 'monospace', fontStyle: 'italic' }}>
+                  {typingNames.length === 1 ? `${typingNames[0]} is typing…` : typingNames.length === 2 ? `${typingNames[0]} and ${typingNames[1]} are typing…` : 'Several people are typing…'}
+                </span>
+              </div>
+            )}
+
+            {/* Input */}
+            {!currentUser.isObserver ? (
+              <div style={{
+                padding: '0.6rem 1rem',
+                paddingBottom: 'calc(0.6rem + env(safe-area-inset-bottom, 0px))',
+                borderTop: '1px solid rgba(255,255,255,0.06)',
+                background: 'rgba(15,13,12,0.98)', flexShrink: 0,
+              }}>
+                {chatError && <p style={{ fontSize: '11px', color: '#F47C7C', marginBottom: '0.3rem' }}>{chatError}</p>}
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <input
+                    value={chatInput}
+                    onChange={e => {
+                      setChatInput(e.target.value); setChatError('')
+                      if (typingDebounceRef.current) clearTimeout(typingDebounceRef.current)
+                      typingDebounceRef.current = setTimeout(() => {
+                        fetch(`/api/rooms/${roomCode}/typing`, {
+                          method: 'POST', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ displayName: currentUser.name, socketId: socketId() }),
+                        }).catch(() => null)
+                      }, 300)
+                    }}
+                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage() } }}
+                    placeholder={activeTab === 'doubts' ? 'Ask a doubt…' : 'Type a message…'}
+                    maxLength={3000}
+                    style={{
+                      flex: 1, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.09)',
+                      borderRadius: '10px', color: '#F0EDE8', fontSize: '15px', padding: '0.55rem 0.75rem',
+                      outline: 'none', fontFamily: 'inherit',
+                    }}
+                  />
+                  <button onClick={sendMessage} disabled={!chatInput.trim()} style={{
+                    width: 40, height: 40, borderRadius: '10px', border: 'none', flexShrink: 0,
+                    background: chatInput.trim() ? 'rgba(201,169,110,0.2)' : 'rgba(255,255,255,0.04)',
+                    color: chatInput.trim() ? '#C9A96E' : 'rgba(240,237,232,0.2)',
+                    cursor: chatInput.trim() ? 'pointer' : 'default',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    transition: 'all 0.15s',
+                  }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ padding: '0.5rem 1rem', textAlign: 'center', borderTop: '1px solid rgba(255,255,255,0.06)', paddingBottom: 'calc(0.5rem + env(safe-area-inset-bottom, 0px))' }}>
+                <Link href="/pricing" style={{ fontSize: '13px', color: '#C9A96E' }}>Upgrade to chat →</Link>
               </div>
             )}
           </div>

@@ -285,6 +285,20 @@ export default function RoomChatPage({ roomCode, roomName, initialMessages, init
     }
   }, [roomCode])
 
+  // Re-anchor to bottom whenever the keyboard opens/closes (visual viewport resize).
+  // The container uses position:fixed inset:0 so height is always correct — we
+  // only need to scroll, never to set a height via JS.
+  useEffect(() => {
+    const vv = window.visualViewport
+    if (!vv) return
+    const scrollToBottom = () => {
+      chatBottomRef.current?.scrollIntoView({ behavior: 'instant' } as ScrollIntoViewOptions)
+    }
+    scrollToBottom()
+    vv.addEventListener('resize', scrollToBottom)
+    return () => vv.removeEventListener('resize', scrollToBottom)
+  }, [])
+
   // Scroll to bottom on new messages
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -328,7 +342,7 @@ export default function RoomChatPage({ roomCode, roomName, initialMessages, init
   )
 
   return (
-    <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column', background: '#0F0D0C', color: '#F0EDE8', fontFamily: 'var(--font-sans, system-ui)' }}>
+    <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', background: '#0F0D0C', color: '#F0EDE8', fontFamily: 'var(--font-sans, system-ui)' }}>
 
       {/* ── Reconnecting banner ───────────────────────────────────────────── */}
       {reconnecting && (
